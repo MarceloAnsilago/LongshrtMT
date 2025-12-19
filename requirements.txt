@@ -1,0 +1,6 @@
+MetaTrader5==5.0.5430
+numpy==2.3.5
+pandas==2.3.3
+patsy==1.0.2
+scipy==1.16.3
+statsmodels==0.14.6

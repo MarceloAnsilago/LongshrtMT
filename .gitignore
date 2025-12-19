@@ -1,0 +1,45 @@
+# Byte-compiled Python artifacts
+__pycache__/
+*.py[cod]
+*.class
+
+# Distribution/build
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+__pypackages__/
+
+# IDE/editor directories
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Python tooling
+htmlcov/
+.tox/
+.pytest_cache/
+coverage.*
+
+# Data files that should not be committed
+*.csv
+*.sqlite3
+*.db

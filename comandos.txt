@@ -1,0 +1,4 @@
+ D:\driver\Documentos\LogshorMt5> venv\Scripts\activate 
+
+
+ python -m app.run
