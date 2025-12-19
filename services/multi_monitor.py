@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import math
 import os
 import time
@@ -9,7 +10,7 @@ from collections import deque
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Deque, Optional
+from typing import Any, Deque, Optional
 
 import MetaTrader5 as mt5
 
@@ -31,6 +32,37 @@ def symbol_exists(mt5_service: MT5Service, sym: str) -> bool:
 # -----------------------------
 def now_ts() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def write_monitor_state(path: Path, payload: dict[str, Any]) -> None:
+    """
+    Atomically dump the monitor payload so Django can read a full snapshot.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.parent / f"{path.name}.tmp"
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(path)
+
+
+HISTORY_MAXLEN = 600
+_PAIR_HISTORY: dict[str, Deque[dict[str, Any]]] = {}
+
+
+def write_monitor_history(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.parent / f"{path.name}.tmp"
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(path)
+
+
+def append_history_entry(pair: str, entry: dict[str, Any]) -> None:
+    buf = _PAIR_HISTORY.get(pair)
+    if buf is None:
+        buf = deque(maxlen=HISTORY_MAXLEN)
+        _PAIR_HISTORY[pair] = buf
+    buf.append(entry)
 
 
 EPS_STD = 1e-9
@@ -254,6 +286,10 @@ class PairRuntime:
         self.sigma_min = sigma_min
         self.confirm_count = 0
         self.prev_abs_z: Optional[float] = None
+        self._was_idle: bool = False
+        self._last_spread: Optional[float] = None
+        self._wake_line: Optional[str] = None
+        self.last_state: dict[str, Any] | None = None
 
     def _reset_entry_state(self) -> None:
         self.confirm_count = 0
@@ -289,14 +325,58 @@ class PairRuntime:
 
         return None
 
+    def pop_wake_line(self) -> Optional[str]:
+        line = self._wake_line
+        self._wake_line = None
+        return line
+
     def step(self):
         pair_name = f"{self.cfg.a}/{self.cfg.b}"
+        self._wake_line = None
+        pair_ts = now_ts()
+        state: dict[str, Any] = {
+            "pair": pair_name,
+            "a": self.cfg.a,
+            "b": self.cfg.b,
+            "alpha": self.cfg.alpha,
+            "beta": self.cfg.beta,
+            "corr": self.cfg.corr,
+            "half_life": self.cfg.half_life,
+            "last_update_ts": pair_ts,
+            "status": "",
+            "phase": "ready",
+            "warm": None,
+            "wake": False,
+            "sameA": False,
+            "sameB": False,
+            "pa": None,
+            "pb": None,
+            "spread": None,
+            "z": None,
+            "signal": "",
+            "side": "",
+            "details": "",
+        }
 
         try:
             pa, age_a, same_a, st_a = get_tick_state(self.cfg.a, self.stale_seconds)
             pb, age_b, same_b, st_b = get_tick_state(self.cfg.b, self.stale_seconds)
         except Exception as e:
-            return pair_name, f"MT5_ERR: {e}"
+            msg = f"MT5_ERR: {e}"
+            state.update({
+                "status": "mt5_err",
+                "signal": "MT5_ERR",
+                "details": msg,
+            })
+            self.last_state = state
+            return pair_name, msg
+
+        state.update({
+            "pa": pa,
+            "pb": pb,
+            "sameA": same_a,
+            "sameB": same_b,
+        })
 
         if pa is None or pb is None:
             fail = self.mt5_service.last_fail()
@@ -308,9 +388,34 @@ class PairRuntime:
             msg = f"{status} | a={pa} b={pb} | stA={st_a} stB={st_b}"
             if fail:
                 msg = f"{msg} | fail={fail}"
+            state.update({
+                "status": status.lower(),
+                "signal": status,
+                "details": msg,
+            })
+            self.last_state = state
             return pair_name, msg
 
         pair_stale = (st_a == "STALE") or (st_b == "STALE")
+        la = math.log(pa)
+        lb = math.log(pb)
+        spread = la - (self.cfg.alpha + self.cfg.beta * lb)
+        is_idle = same_a and same_b
+
+        if not pair_stale:
+            woke_up = self._was_idle and not is_idle
+            spread_changed = self._last_spread is None or abs(spread - self._last_spread) > 1e-9
+            if woke_up and spread_changed:
+                # Only trigger WAKE when leaving idle with a real spread movement.
+                self._wake_line = f"WAKE {pair_name} | pa={pa:.5f} pb={pb:.5f} spread={spread:+.12f}"
+        self._was_idle = is_idle
+        self._last_spread = spread
+
+        state.update({
+            "spread": spread,
+            "wake": bool(self._wake_line),
+        })
+
         if pair_stale:
             def fmt_age(value: Optional[float]) -> str:
                 return f"{value:.1f}s" if value is not None else "n/a"
@@ -318,37 +423,54 @@ class PairRuntime:
             status = "STALE"
             age_a_str = fmt_age(age_a)
             age_b_str = fmt_age(age_b)
-            return (
-                pair_name,
+            msg = (
                 f"{status} | pa={pa:.5f} pb={pb:.5f} "
                 f"| ageA={age_a_str} ageB={age_b_str} "
                 f"| sameA={same_a} sameB={same_b} | stA={st_a} stB={st_b}"
             )
+            state.update({
+                "status": "stale",
+                "signal": "STALE",
+                "details": msg,
+            })
+            self.last_state = state
+            return pair_name, msg
 
-        if same_a and same_b:
-            la = math.log(pa)
-            lb = math.log(pb)
-            spread = la - (self.cfg.alpha + self.cfg.beta * lb)
-            return pair_name, (
-                f"quiet | pa={pa:.5f} pb={pb:.5f} "
+        if is_idle:
+            msg = (
+                f"idle | pa={pa:.5f} pb={pb:.5f} "
                 f"| sameA={same_a} sameB={same_b} spread={spread:+.12f}"
             )
+            state.update({
+                "status": "idle",
+                "signal": "QUIET",
+                "details": msg,
+            })
+            self.last_state = state
+            return pair_name, msg
 
-        la = math.log(pa)
-        lb = math.log(pb)
-
-        spread = la - (self.cfg.alpha + self.cfg.beta * lb)
         z = self.z.update(spread)
         if z is None:
             if self.z.last_std is not None and self.z.last_std < EPS_STD:
-                return pair_name, f"flat(std~0) pa={pa:.5f} pb={pb:.5f} spread={spread:+.12f}"
-            target = min(self.z.warmup, self.z.window)
-            count = len(self.z.values)
-            warm_msg = f"warming({count}/{target})"
-            if self.z.last_std is not None:
-                warm_msg += f" std={self.z.last_std:.6f}"
-            return pair_name, f"{warm_msg} | pa={pa:.5f} pb={pb:.5f} spread={spread:+.12f}"
+                msg = f"flat(std~0) pa={pa:.5f} pb={pb:.5f} spread={spread:+.12f}"
+            else:
+                target = min(self.z.warmup, self.z.window)
+                count = len(self.z.values)
+                msg = f"active(warming {count}/{target})"
+                if self.z.last_std is not None:
+                    msg += f" std={self.z.last_std:.6f}"
+                msg = f"{msg} | pa={pa:.5f} pb={pb:.5f} spread={spread:+.12f}"
+            state.update({
+                "status": "active",
+                "phase": "warming",
+                "warm": f"{len(self.z.values)}/{min(self.z.warmup, self.z.window)}",
+                "signal": "WARMING",
+                "details": msg,
+            })
+            self.last_state = state
+            return pair_name, msg
 
+        state["z"] = z
         in_position = self.engine.pos is not None
         if not in_position:
             block = self._entry_block_reason(z)
@@ -357,6 +479,12 @@ class PairRuntime:
                     f"{block} | pa={pa:.5f} pb={pb:.5f} "
                     f"| z={z:+.3f} spread={spread:+.12f}"
                 )
+                state.update({
+                    "status": "active",
+                    "signal": "HOLD",
+                    "details": msg,
+                })
+                self.last_state = state
                 return pair_name, msg
 
         status, side, details, pnl_str = self.engine.on_tick(z, spread)
@@ -364,7 +492,14 @@ class PairRuntime:
         if status in ("ENTER", "EXIT"):
             self._reset_entry_state()
 
-        msg = f"z={z:+.2f} pa={pa:.5f} pb={pb:.5f} spread={spread:+.12f} {status} {side} {details}".strip()
+        msg = f"active | z={z:+.2f} pa={pa:.5f} pb={pb:.5f} spread={spread:+.12f} {status} {side} {details}".strip()
+        state.update({
+            "status": "active",
+            "signal": status,
+            "side": side,
+            "details": details or msg,
+        })
+        self.last_state = state
         return pair_name, msg, status, side, z, spread, pnl_str
 
 
@@ -481,8 +616,22 @@ def main(
         print("Falha ao conectar no MT5.")
         return
 
-    Path("data").mkdir(exist_ok=True)
+    data_dir = Path("data")
+    data_dir.mkdir(exist_ok=True)
     logger = MultiTradeLogger("data/trades_multi.csv")
+    monitor_state_path = data_dir / "monitor_state.json"
+    monitor_history_path = data_dir / "monitor_history.json"
+    monitor_state_params = {
+        "top_n": top_n,
+        "enter_z": enter_z,
+        "exit_band": exit_band,
+        "z_window": z_window,
+        "warmup": warmup,
+        "poll_seconds": poll_seconds,
+        "stale_seconds": stale_seconds,
+        "entry_confirm_mode": confirm_mode.value,
+        "sigma_min": sigma_min,
+    }
 
     try:
         pairs = load_top_pairs(mt5_service, "pairs_rank.csv", top_n=top_n)
@@ -510,8 +659,26 @@ def main(
 
         while True:
             lines = []
+            wake_lines = []
             for rt in runtimes:
                 res = rt.step()
+                wake_line = rt.pop_wake_line()
+                if wake_line:
+                    wake_lines.append(wake_line)
+
+                state = rt.last_state
+                if state:
+                    append_history_entry(state["pair"], {
+                        "ts": state["last_update_ts"],
+                        "z": state.get("z"),
+                        "spread": state.get("spread"),
+                        "pa": state.get("pa"),
+                        "pb": state.get("pb"),
+                        "status": state.get("status"),
+                        "signal": state.get("signal"),
+                        "side": state.get("side"),
+                        "wake": state.get("wake"),
+                    })
 
                 # backward-compatible unpack:
                 if len(res) == 2:
@@ -539,11 +706,27 @@ def main(
                     print(f"ALERTA {status} {pair_name} | {msg}")
                     print(("=" * 70) + "\n")
 
-            print(now_ts())
+            for wl in wake_lines:
+                print("  " + wl)
+            cycle_ts = now_ts()
+            print(cycle_ts)
             for ln in lines:
                 print("  " + ln)
-            print("-" * 70)
 
+            payload = {
+                "ts": cycle_ts,
+                "params": monitor_state_params,
+                "pairs": [rt.last_state for rt in runtimes if rt.last_state],
+            }
+            write_monitor_state(monitor_state_path, payload)
+            history_payload = {
+                "ts": cycle_ts,
+                "params": monitor_state_params,
+                "history": {pair: list(buf) for pair, buf in _PAIR_HISTORY.items()},
+            }
+            write_monitor_history(monitor_history_path, history_payload)
+
+            print("-" * 70)
             time.sleep(poll_seconds)
 
     except KeyboardInterrupt:

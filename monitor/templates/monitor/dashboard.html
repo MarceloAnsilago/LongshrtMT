@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <title>Logshor Monitor</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: "Segoe UI", system-ui, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            background: #070b10;
+            color: #f4f6fb;
+        }
+
+        .page-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            background: #0c1116;
+        }
+
+        .page-header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+        }
+
+        .page-header p {
+            margin: 0.25rem 0 0;
+            color: #a5acc0;
+        }
+
+        main {
+            padding: 1rem 1.5rem 2rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+
+        th, td {
+            padding: 0.35rem 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        tbody tr {
+            transition: background 0.3s ease;
+        }
+
+        .status-stale td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .status-mt5_down td,
+        .status-mt5_err td {
+            background: #3d0d0d;
+            color: #fef8f8;
+        }
+
+        .status-idle td,
+        .status-active td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .signal-in-position td:first-child {
+            background: #3f3f00;
+        }
+
+        .signal-in-position td {
+            background: rgba(255, 241, 131, 0.08);
+        }
+
+        .signal-enter {
+            border-left: 4px solid #39ff7b;
+            animation: enter-flash 1s ease infinite;
+        }
+
+        .zone-warn td {
+            background: rgba(239, 176, 58, 0.18);
+        }
+
+        .zone-hot td {
+            background: rgba(235, 83, 13, 0.3);
+            color: #fff;
+        }
+
+        .zone-enter td {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .zone-enter-long td {
+            background: rgba(27, 207, 114, 0.18);
+        }
+
+        .zone-enter-short td {
+            background: rgba(215, 85, 76, 0.18);
+        }
+
+        .zone-exit td {
+            background: rgba(138, 141, 255, 0.14);
+        }
+
+        .wake-blink {
+            animation: wake-highlight 0.6s ease;
+        }
+
+        .cell-flash {
+            animation: flash-cell 0.5s ease;
+        }
+
+        .hotline {
+            box-shadow: 0 0 12px rgba(255, 160, 80, 0.4);
+            animation: hotline-pulse 1.5s ease-out infinite;
+        }
+
+        .action-btn {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: inherit;
+            padding: 0.25rem 0.5rem;
+            margin-right: 0.25rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        .action-btn:focus {
+            outline: 0;
+            border-color: #7ad1ff;
+        }
+
+        .action-confirmed td {
+            background: rgba(57, 255, 123, 0.12);
+        }
+
+        .action-closed td {
+            background: rgba(215, 85, 76, 0.12);
+        }
+
+        @keyframes wake-highlight {
+            0% { background: rgba(57, 255, 123, 0.35); }
+            100% { background: transparent; }
+        }
+
+        @keyframes flash-cell {
+            0% { background: rgba(57, 193, 255, 0.5); }
+            100% { background: transparent; }
+        }
+
+        @keyframes enter-flash {
+            0% { background: rgba(57, 255, 123, 0.3); }
+            50% { background: rgba(57, 255, 123, 0.1); }
+            100% { background: transparent; }
+        }
+
+        @keyframes hotline-pulse {
+            0% { box-shadow: 0 0 6px rgba(255, 160, 80, 0.25); }
+            50% { box-shadow: 0 0 14px rgba(255, 117, 0, 0.55); }
+            100% { box-shadow: 0 0 6px rgba(255, 160, 80, 0.25); }
+        }
+
+        #error-msg {
+            color: #ffc09f;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Zone rules: abs(z)>=1.5 => zone-warn, abs(z)>=2.0 => zone-hot; ENTER rows add zone-enter (green/red), EXIT adds zone-exit, active rows with abs(z)>1.8 apply hotline pulse -->
+    <header class="page-header">
+        <h1>Logshor Monitor</h1>
+        <p id="last-ts">Last update: -</p>
+    </header>
+    <main>
+        <table id="monitor-table">
+            <thead>
+                <tr>
+                    <th>Pair</th>
+                    <th>Status</th>
+                    <th>Z</th>
+                    <th>Spread</th>
+                    <th>pa</th>
+                    <th>pb</th>
+                    <th>Signal</th>
+                    <th>Trade</th>
+                    <th>Side</th>
+                    <th>Actions</th>
+                    <th>Updated</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <p id="error-msg"></p>
+    </main>
+    <script>
+        (() => {
+            const REFRESH_MS = 1000;
+            const COLUMN_KEYS = ["pair", "status", "z", "spread", "pa", "pb", "signal", "trade", "side", "actions", "last_update_ts"];
+            const NUMERIC_KEYS = new Set(["z", "spread", "pa", "pb"]);
+            const lastValues = {};
+            const lastSignals = {};
+            const tradeHistory = {};
+            let polling;
+            let audioContext = null;
+
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) {
+                audioContext = new AudioCtx();
+            }
+
+            const parseNumericValue = (value) => {
+                if (value == null || value === "") {
+                    return null;
+                }
+                if (typeof value === "number") {
+                    return Number.isFinite(value) ? value : null;
+                }
+                const parsed = Number(value);
+                return Number.isFinite(parsed) ? parsed : null;
+            };
+
+            const sortByAbsZ = (items) => {
+                const sortable = Array.isArray(items) ? items.slice() : [];
+                sortable.sort((a, b) => {
+                    const za = parseNumericValue(a.z);
+                    const zb = parseNumericValue(b.z);
+                    if (za == null && zb == null) {
+                        return 0;
+                    }
+                    if (za == null) {
+                        return 1;
+                    }
+                    if (zb == null) {
+                        return -1;
+                    }
+                    return Math.abs(zb) - Math.abs(za);
+                });
+                return sortable;
+            };
+
+            const formatDuration = (ms) => {
+                const totalSeconds = Math.floor(Math.max(ms, 0) / 1000);
+                const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
+                const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
+                const seconds = String(totalSeconds % 60).padStart(2, "0");
+                return `${hours}:${minutes}:${seconds}`;
+            };
+
+            const tableBody = document.querySelector("#monitor-table tbody");
+            const lastTsEl = document.getElementById("last-ts");
+            const errorEl = document.getElementById("error-msg");
+
+            const formatValue = (key, value) => {
+                if (value == null) {
+                    return "-";
+                }
+                if (key === "z") {
+                    return value.toFixed(2);
+                }
+                if (key === "spread") {
+                    return value.toFixed(6);
+                }
+                if (key === "pa" || key === "pb") {
+                    return value.toFixed(5);
+                }
+                return value;
+            };
+
+            const playBeep = () => {
+                if (!audioContext) {
+                    return;
+                }
+                try {
+                    audioContext.resume().catch(() => {});
+                    const osc = audioContext.createOscillator();
+                    const gain = audioContext.createGain();
+                    osc.type = "sine";
+                    osc.frequency.setValueAtTime(660, audioContext.currentTime);
+                    gain.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    osc.connect(gain);
+                    gain.connect(audioContext.destination);
+                    osc.start();
+                    osc.stop(audioContext.currentTime + 0.1);
+                } catch (error) {
+                    console.warn("beep", error);
+                }
+            };
+
+            const getTradeInfo = (pair, cycleDate) => {
+                const key = pair.pair;
+                const zValue = parseNumericValue(pair.z);
+                const absZ = zValue != null ? Math.abs(zValue) : null;
+                const entry = tradeHistory[key] || { state: "FLAT", zMaxAbs: 0, openedAt: cycleDate.toISOString() };
+                if (pair.signal === "IN_POSITION") {
+                    if (entry.state !== "IN_POSITION") {
+                        entry.openedAt = cycleDate.toISOString();
+                        entry.zMaxAbs = absZ ?? 0;
+                    } else if (absZ != null) {
+                        entry.zMaxAbs = Math.max(entry.zMaxAbs ?? 0, absZ);
+                    }
+                    entry.state = "IN_POSITION";
+                    entry.zMaxAbs = Math.max(entry.zMaxAbs ?? 0, absZ ?? 0);
+                } else {
+                    entry.state = "FLAT";
+                }
+                tradeHistory[key] = entry;
+
+                if (entry.state === "IN_POSITION") {
+                    const opened = new Date(entry.openedAt);
+                    const elapsed = Math.max(0, cycleDate - opened);
+                    const text = `IN_POSITION (${formatDuration(elapsed)})`;
+                    const title = `opened ${opened.toLocaleTimeString()} · max|z|=${(entry.zMaxAbs ?? 0).toFixed(2)}`;
+                    return { text, title };
+                }
+                return { text: "FLAT", title: "Par fora da posição" };
+            };
+
+            const createActionsCell = (row) => {
+                const actionsCell = document.createElement("td");
+                const confirmBtn = document.createElement("button");
+                const closeBtn = document.createElement("button");
+
+                confirmBtn.textContent = "Confirmar execução no MT5";
+                confirmBtn.className = "action-btn";
+                confirmBtn.addEventListener("click", () => {
+                    row.classList.add("action-confirmed");
+                    confirmBtn.textContent = "Confirmado";
+                    setTimeout(() => {
+                        row.classList.remove("action-confirmed");
+                        confirmBtn.textContent = "Confirmar execução no MT5";
+                    }, 2000);
+                });
+
+                closeBtn.textContent = "Fechar manualmente";
+                closeBtn.className = "action-btn";
+                closeBtn.addEventListener("click", () => {
+                    row.classList.add("action-closed");
+                    closeBtn.textContent = "Fechado";
+                    setTimeout(() => {
+                        row.classList.remove("action-closed");
+                        closeBtn.textContent = "Fechar manualmente";
+                    }, 2000);
+                });
+
+                actionsCell.append(confirmBtn, closeBtn);
+                return actionsCell;
+            };
+
+            const renderTable = (pairs, cycleDate) => {
+                tableBody.innerHTML = "";
+                const sortedPairs = sortByAbsZ(pairs);
+                sortedPairs.forEach(pair => {
+                    const row = document.createElement("tr");
+                    row.dataset.pair = pair.pair;
+                    row.classList.add(`status-${pair.status || "active"}`);
+                    const zValue = parseNumericValue(pair.z);
+                    const absZ = zValue != null ? Math.abs(zValue) : null;
+                    const tradeInfo = getTradeInfo(pair, cycleDate);
+
+                    if (absZ != null) {
+                        if (absZ >= 2.0) {
+                            row.classList.add("zone-hot");
+                        } else if (absZ >= 1.5) {
+                            row.classList.add("zone-warn");
+                        }
+                    }
+
+                    if (pair.signal === "ENTER") {
+                        if (lastSignals[pair.pair] !== "ENTER") {
+                            playBeep();
+                        }
+                        row.classList.add("signal-enter");
+                        row.classList.add("zone-enter");
+                        if (pair.side === "SHORT_SPREAD") {
+                            row.classList.add("zone-enter-short");
+                        } else {
+                            row.classList.add("zone-enter-long");
+                        }
+                    } else if (pair.signal === "IN_POSITION") {
+                        row.classList.add("signal-in-position");
+                    }
+
+                    if (pair.signal === "EXIT") {
+                        if (lastSignals[pair.pair] !== "EXIT") {
+                            playBeep();
+                        }
+                        row.classList.add("zone-exit");
+                    }
+
+                    if (pair.status === "active" && absZ != null && absZ > 1.8) {
+                        row.classList.add("hotline");
+                    }
+
+                    if (pair.wake) {
+                        row.classList.add("wake-blink");
+                        setTimeout(() => row.classList.remove("wake-blink"), 600);
+                    }
+
+                    const prevValues = lastValues[pair.pair] || {};
+                    COLUMN_KEYS.forEach(key => {
+                        const td = document.createElement("td");
+                        if (key === "trade") {
+                            td.textContent = tradeInfo.text;
+                            if (tradeInfo.title) {
+                                td.title = tradeInfo.title;
+                            }
+                            row.appendChild(td);
+                            return;
+                        }
+                        if (key === "actions") {
+                            row.appendChild(createActionsCell(row));
+                            return;
+                        }
+                        if (key === "pair") {
+                            const link = document.createElement("a");
+                            link.href = `/monitor/pair/${encodeURIComponent(pair.pair)}/`;
+                            link.target = "_blank";
+                            link.rel = "noopener";
+                            link.textContent = pair.pair;
+                            td.appendChild(link);
+                            row.appendChild(td);
+                            return;
+                        }
+                        const rawValue = pair[key];
+                        td.textContent = formatValue(key, rawValue);
+                        if (NUMERIC_KEYS.has(key) && prevValues[key] != null && rawValue != null) {
+                            if (Math.abs(rawValue - prevValues[key]) > 1e-9) {
+                                td.classList.add("cell-flash");
+                                setTimeout(() => td.classList.remove("cell-flash"), 500);
+                            }
+                        }
+                        row.appendChild(td);
+                    });
+
+                    tableBody.appendChild(row);
+                    lastValues[pair.pair] = {
+                        pa: pair.pa,
+                        pb: pair.pb,
+                        spread: pair.spread,
+                        z: pair.z,
+                    };
+                    lastSignals[pair.pair] = pair.signal;
+                });
+            };
+
+            const fetchState = async () => {
+                try {
+                    const response = await fetch("/api/monitor/state/");
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    const payload = await response.json();
+                    errorEl.textContent = payload.error || "";
+                    lastTsEl.textContent = `Last update: ${payload.ts || "-"}`;
+                    const cycleDate = payload.ts ? new Date(payload.ts) : new Date();
+                    renderTable(Array.isArray(payload.pairs) ? payload.pairs : [], cycleDate);
+                } catch (error) {
+                    errorEl.textContent = error.message;
+                    tableBody.innerHTML = "";
+                } finally {
+                    polling = setTimeout(fetchState, REFRESH_MS);
+                }
+            };
+
+            fetchState();
+        })();
+    </script>
+</body>
+</html>

@@ -2,3 +2,9 @@
 
 
  python -m app.run
+
+
+curl "http://127.0.0.1:8000/api/monitor/history/?pair=ALOS3/BPAC11&limit=5"  # verify points non-empty when monitor is running
+
+$root = "D:\driver\Documentos\LogshorMt5"
+wt -w 0 "new-tab -p `"Windows PowerShell`" -d `"$root`" powershell -NoExit -Command `"venv\Scripts\Activate.ps1; python manage.py runserver 0.0.0.0:8000`" ; split-pane -V -p `"Windows PowerShell`" -d `"$root`" powershell -NoExit -Command `"venv\Scripts\Activate.ps1; python -m app.run`""
