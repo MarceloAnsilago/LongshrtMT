@@ -133,6 +133,104 @@
             border-color: #7ad1ff;
         }
 
+        .header-actions {
+            margin-top: 0.75rem;
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .timeframe-control {
+            display: flex;
+            gap: 0.35rem;
+            align-items: center;
+        }
+
+        .timeframe-control select {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: inherit;
+            padding: 0.25rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            min-width: 110px;
+        }
+
+        .timeframe-control select:focus {
+            outline: none;
+            border-color: #7ad1ff;
+        }
+
+        .timeframe-control select:disabled {
+            opacity: 0.6;
+        }
+
+        .timeframe-status {
+            font-size: 0.85rem;
+            color: #cfd5e4;
+        }
+
+        .header-actions {
+            margin-top: 0.75rem;
+        }
+
+        .all-pairs-panel {
+            margin-top: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .all-pairs-panel.hidden {
+            display: none;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .panel-header span:last-child {
+            font-weight: 400;
+            font-size: 0.85rem;
+            color: #cfd5e4;
+        }
+
+        .pairs-grid {
+            margin-top: 0.75rem;
+            max-height: 250px;
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 6px;
+        }
+
+        .pair-entry {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.35rem 0.5rem;
+            font-size: 0.85rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .pair-entry:last-child {
+            border-bottom: none;
+        }
+
+        .pair-name {
+            font-weight: 600;
+        }
+
+        .pair-meta {
+            color: #b0b7c8;
+            min-width: 180px;
+            text-align: right;
+        }
+
         .action-confirmed td {
             background: rgba(57, 255, 123, 0.12);
         }
@@ -175,6 +273,15 @@
     <header class="page-header">
         <h1>Logshor Monitor</h1>
         <p id="last-ts">Last update: -</p>
+        <div class="header-actions">
+            <div class="timeframe-control">
+                <select id="timeframe-select" class="timeframe-select">
+                    <option value="">Carregando...</option>
+                </select>
+                <span id="timeframe-status" class="timeframe-status">Período: -</span>
+            </div>
+            <button id="verify-all-btn" class="action-btn">Verificar todos</button>
+        </div>
     </header>
     <main>
         <table id="monitor-table">
@@ -195,6 +302,18 @@
             </thead>
             <tbody></tbody>
         </table>
+        <section id="all-pairs-panel" class="all-pairs-panel hidden">
+            <div class="panel-header">
+                <span>Pares disponíveis</span>
+                <span id="all-pairs-status">—</span>
+            </div>
+            <div id="all-pairs-list" class="pairs-grid">
+                <div class="pair-entry">
+                    <span class="pair-name">...</span>
+                    <span class="pair-meta">Aguardando</span>
+                </div>
+            </div>
+        </section>
         <p id="error-msg"></p>
     </main>
     <script>
@@ -254,6 +373,59 @@
             const tableBody = document.querySelector("#monitor-table tbody");
             const lastTsEl = document.getElementById("last-ts");
             const errorEl = document.getElementById("error-msg");
+            const verifyAllBtn = document.getElementById("verify-all-btn");
+            const allPairsPanel = document.getElementById("all-pairs-panel");
+            const allPairsStatus = document.getElementById("all-pairs-status");
+            const allPairsList = document.getElementById("all-pairs-list");
+            let allPairsCache = null;
+            let allPairsVisible = false;
+            const timeframeSelect = document.getElementById("timeframe-select");
+            const timeframeStatus = document.getElementById("timeframe-status");
+            let timeframeOptionsList = [];
+
+            const updateTimeframeStatus = (value, note) => {
+                if (!timeframeStatus) {
+                    return;
+                }
+                const base = `Período: ${value ?? "—"}`;
+                timeframeStatus.textContent = note ? `${base} (${note})` : base;
+            };
+
+            const renderTimeframeOptions = (options, selected) => {
+                if (!timeframeSelect) {
+                    return;
+                }
+                timeframeSelect.innerHTML = options.map(opt => `<option value="${opt}">${opt}</option>`).join("");
+                if (selected && options.includes(selected)) {
+                    timeframeSelect.value = selected;
+                } else if (options.length > 0) {
+                    timeframeSelect.value = options[0];
+                } else {
+                    timeframeSelect.value = "";
+                }
+            };
+
+            const loadTimeframeConfig = async () => {
+                if (!timeframeSelect) {
+                    return;
+                }
+                timeframeSelect.disabled = true;
+                try {
+                    const response = await fetch("/api/monitor/timeframe/");
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    const payload = await response.json();
+                    const options = Array.isArray(payload.options) ? payload.options : [];
+                    timeframeOptionsList = options;
+                    renderTimeframeOptions(options, payload.timeframe);
+                    updateTimeframeStatus(payload.timeframe || timeframeSelect.value);
+                } catch (error) {
+                    updateTimeframeStatus("erro", error.message);
+                } finally {
+                    timeframeSelect.disabled = false;
+                }
+            };
 
             const formatValue = (key, value) => {
                 if (value == null) {
@@ -457,6 +629,13 @@
                     const payload = await response.json();
                     errorEl.textContent = payload.error || "";
                     lastTsEl.textContent = `Last update: ${payload.ts || "-"}`;
+                    const timeframeValue = payload.params?.timeframe;
+                    if (timeframeSelect && timeframeValue) {
+                        if (timeframeOptionsList.includes(timeframeValue)) {
+                            timeframeSelect.value = timeframeValue;
+                        }
+                        updateTimeframeStatus(timeframeValue);
+                    }
                     const cycleDate = payload.ts ? new Date(payload.ts) : new Date();
                     renderTable(Array.isArray(payload.pairs) ? payload.pairs : [], cycleDate);
                 } catch (error) {
@@ -467,7 +646,122 @@
                 }
             };
 
+            void loadTimeframeConfig();
             fetchState();
+
+            const toggleAllPairsPanel = (show) => {
+                allPairsVisible = show;
+                allPairsPanel.classList.toggle("hidden", !show);
+                verifyAllBtn.textContent = show ? "Ocultar pares" : "Verificar todos";
+            };
+
+            const formatPairValue = (value, decimals = 3) => {
+                if (typeof value === "number") {
+                    return value.toFixed(decimals);
+                }
+                if (value == null || value === "") {
+                    return "—";
+                }
+                return String(value);
+            };
+
+            const renderAllPairs = (pairs) => {
+                if (!Array.isArray(pairs) || pairs.length === 0) {
+                    allPairsList.innerHTML = `
+                        <div class="pair-entry">
+                            <span class="pair-name">Sem pares cadastrados</span>
+                            <span class="pair-meta">—</span>
+                        </div>
+                    `;
+                    allPairsStatus.textContent = "0 pares";
+                    return;
+                }
+                const rows = pairs.map(pair => {
+                    const meta = [
+                        `score:${formatPairValue(pair.score)}`,
+                        `corr:${formatPairValue(pair.corr)}`,
+                        `α:${formatPairValue(pair.alpha)}`,
+                        `β:${formatPairValue(pair.beta)}`,
+                        `hl:${formatPairValue(pair.half_life)}`,
+                    ].join(" • ");
+                    return `
+                        <div class="pair-entry">
+                            <span class="pair-name">${pair.pair}</span>
+                            <span class="pair-meta">${meta}</span>
+                        </div>
+                    `;
+                });
+                allPairsList.innerHTML = rows.join("");
+                allPairsStatus.textContent = `${pairs.length} pares`;
+            };
+
+            const loadAllPairs = async () => {
+                allPairsStatus.textContent = "Carregando...";
+                try {
+                    const response = await fetch("/api/monitor/all-pairs/");
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    const payload = await response.json();
+                    if (payload.error) {
+                        throw new Error(payload.error);
+                    }
+                    allPairsCache = Array.isArray(payload.pairs) ? payload.pairs : [];
+                    renderAllPairs(allPairsCache);
+                    toggleAllPairsPanel(true);
+                } catch (error) {
+                    allPairsStatus.textContent = error.message;
+                    allPairsList.innerHTML = `
+                        <div class="pair-entry">
+                            <span class="pair-name">Erro ao carregar</span>
+                            <span class="pair-meta">${error.message}</span>
+                        </div>
+                    `;
+                    toggleAllPairsPanel(true);
+                }
+            };
+
+            verifyAllBtn.addEventListener("click", () => {
+                if (allPairsVisible) {
+                    toggleAllPairsPanel(false);
+                    return;
+                }
+                if (allPairsCache) {
+                    renderAllPairs(allPairsCache);
+                    toggleAllPairsPanel(true);
+                    return;
+                }
+                void loadAllPairs();
+            });
+
+            if (timeframeSelect) {
+                timeframeSelect.addEventListener("change", async () => {
+                    const selection = timeframeSelect.value;
+                    timeframeSelect.disabled = true;
+                    updateTimeframeStatus(selection, "salvando...");
+                    try {
+                        const response = await fetch("/api/monitor/timeframe/", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ timeframe: selection }),
+                        });
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}`);
+                        }
+                        const payload = await response.json();
+                        if (payload.error) {
+                            throw new Error(payload.error);
+                        }
+                        renderTimeframeOptions(timeframeOptionsList, payload.timeframe);
+                        timeframeSelect.value = payload.timeframe;
+                        updateTimeframeStatus(payload.timeframe);
+                    } catch (error) {
+                        timeframeStatus.textContent = error.message;
+                    } finally {
+                        timeframeSelect.disabled = false;
+                    }
+                });
+            }
         })();
     </script>
 </body>

@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+import csv
 
 from django.http import JsonResponse
 from django.shortcuts import render
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_http_methods
 from urllib.parse import unquote
+
+from timeframe_config import TIMEFRAME_OPTIONS, load_timeframe_setting, save_timeframe_setting
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATE_PATH = BASE_DIR / "data" / "monitor_state.json"
@@ -28,6 +31,74 @@ def monitor_state(request):
     except Exception as exc:
         return JsonResponse({"ts": now_ts(), "pairs": [], "error": str(exc)})
     return JsonResponse(payload)
+
+
+@require_GET
+def monitor_all_pairs(request):
+    csv_path = BASE_DIR / "pairs_rank.csv"
+    if not csv_path.exists():
+        return JsonResponse({
+            "ts": now_ts(),
+            "pairs": [],
+            "error": "pairs_rank.csv not found",
+        }, status=404)
+
+    pairs: list[dict[str, object]] = []
+    try:
+        with csv_path.open("r", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            for row in reader:
+                pair_value = (row.get("pair") or "").strip()
+                if not pair_value:
+                    continue
+                entry: dict[str, object] = {"pair": pair_value}
+                for field in ("score", "corr", "alpha", "beta", "half_life"):
+                    raw = row.get(field)
+                    if raw is None or raw == "":
+                        entry[field] = None
+                    else:
+                        try:
+                            entry[field] = float(raw)
+                        except ValueError:
+                            entry[field] = raw
+                pairs.append(entry)
+    except Exception as exc:
+        return JsonResponse({
+            "ts": now_ts(),
+            "pairs": [],
+            "error": str(exc),
+        }, status=500)
+
+    return JsonResponse({
+        "ts": now_ts(),
+        "pairs": pairs,
+    })
+
+
+@require_http_methods(["GET", "POST"])
+def monitor_timeframe(request):
+    if request.method == "GET":
+        return JsonResponse({
+            "timeframe": load_timeframe_setting(),
+            "options": list(TIMEFRAME_OPTIONS),
+            "ts": now_ts(),
+        })
+
+    try:
+        data = json.loads(request.body.decode("utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        return JsonResponse({"error": f"invalid json: {exc}"}, status=400)
+
+    timeframe = data.get("timeframe")
+    if not isinstance(timeframe, str):
+        return JsonResponse({"error": "timeframe is required"}, status=400)
+
+    try:
+        saved = save_timeframe_setting(timeframe)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    return JsonResponse({"timeframe": saved})
 
 
 def _load_history_data() -> dict[str, object]:

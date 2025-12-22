@@ -16,6 +16,7 @@ import MetaTrader5 as mt5
 
 from services.mt5_connect import IPC_FAIL, MT5Config, MT5Service
 from services.pair_calibration import calibrate_pair_from_mt5
+from timeframe_config import DEFAULT_TIMEFRAME, load_timeframe_setting
 
 
 # -----------------------------
@@ -69,54 +70,10 @@ EPS_STD = 1e-9
 DEFAULT_STALE_SECONDS = 300.0
 
 
-_LAST_TICK_MSC: dict[str, int] = {}
-_LAST_SEEN_LOCAL: dict[str, float] = {}
-
-
 class EntryConfirmMode(Enum):
     NONE = "none"
     CONSECUTIVE = "consecutive"
     INCREASING = "increasing"
-
-
-def get_tick_state(symbol: str, stale_seconds: float = DEFAULT_STALE_SECONDS) -> tuple[Optional[float], Optional[float], bool, str]:
-    """
-    Return (price, age, same_tick, status).
-      - price: float | None
-      - age: segundos desde o último tick observado localmente
-      - same_tick: bool (baseado apenas em time_msc)
-      - status: "OK" | "STALE" | "NO_TICK"
-    """
-    tick = mt5.symbol_info_tick(symbol)
-    if tick is None:
-        return None, None, False, "NO_TICK"
-
-    last = float(getattr(tick, "last", 0.0) or 0.0)
-    bid = float(getattr(tick, "bid", 0.0) or 0.0)
-    ask = float(getattr(tick, "ask", 0.0) or 0.0)
-
-    if last > 0:
-        price = last
-    elif bid > 0 and ask > 0:
-        price = (bid + ask) / 2.0
-    else:
-        price = bid or ask or None
-
-    msc = int(getattr(tick, "time_msc", 0) or 0)
-    now = time.time()
-
-    prev_msc = _LAST_TICK_MSC.get(symbol)
-    same_tick = (prev_msc == msc) if (prev_msc is not None and msc > 0) else False
-
-    if prev_msc is None or msc != prev_msc:
-        _LAST_TICK_MSC[symbol] = msc
-        _LAST_SEEN_LOCAL[symbol] = now
-
-    last_seen = _LAST_SEEN_LOCAL.get(symbol, now)
-    age = now - last_seen
-
-    status = "STALE" if age > stale_seconds else "OK"
-    return price, age, same_tick, status
 
 
 def parse_entry_confirm_mode(value: str) -> EntryConfirmMode:
@@ -125,6 +82,21 @@ def parse_entry_confirm_mode(value: str) -> EntryConfirmMode:
         if mode.value == normalized:
             return mode
     raise ValueError(f"confirm mode inválido: {value}")
+
+
+TIMEFRAME_MAP = {
+    "D1": mt5.TIMEFRAME_D1,
+    "H1": mt5.TIMEFRAME_H1,
+    "M15": mt5.TIMEFRAME_M15,
+    "M5": mt5.TIMEFRAME_M5,
+}
+
+
+def resolve_timeframe(name: str) -> tuple[str, int]:
+    normalized = name.strip().upper()
+    if normalized not in TIMEFRAME_MAP:
+        normalized = DEFAULT_TIMEFRAME
+    return normalized, TIMEFRAME_MAP[normalized]
 
 
 def save_pairs_cache(pairs: list["PairCfg"], path: str = "data/pairs_last_good.csv") -> None:
@@ -278,18 +250,26 @@ class PairRuntime:
         sigma_min: float,
     ):
         self.cfg = cfg
-        self.z = RollingZScore(window=z_window, warmup=warmup)
-        self.engine = SignalEngine(enter_z=enter_z, exit_band=exit_band)
         self.mt5_service = mt5_service
         self.stale_seconds = stale_seconds
         self.confirm_mode = entry_confirm_mode
         self.sigma_min = sigma_min
-        self.confirm_count = 0
-        self.prev_abs_z: Optional[float] = None
-        self._was_idle: bool = False
+
+        self._enter_z = enter_z
+        self._exit_band = exit_band
+        self._z_window = z_window
+        self._warmup = warmup
+
+        self._current_timeframe: str | None = None
+        self._last_data_ts: Optional[int] = None
+        self._last_ts_a: Optional[int] = None
+        self._last_ts_b: Optional[int] = None
         self._last_spread: Optional[float] = None
+        self._was_idle: bool = False
         self._wake_line: Optional[str] = None
         self.last_state: dict[str, Any] | None = None
+
+        self._reset_stream()
 
     def _reset_entry_state(self) -> None:
         self.confirm_count = 0
@@ -325,12 +305,41 @@ class PairRuntime:
 
         return None
 
+    def _reset_stream(self) -> None:
+        self.z = RollingZScore(window=self._z_window, warmup=self._warmup)
+        self.engine = SignalEngine(enter_z=self._enter_z, exit_band=self._exit_band)
+        self._reset_entry_state()
+        self._last_data_ts = None
+        self._last_ts_a = None
+        self._last_ts_b = None
+        self._last_spread = None
+        self._was_idle = False
+        self._wake_line = None
+        self.last_state = None
+
+    def ensure_timeframe(self, timeframe: str) -> None:
+        if timeframe != self._current_timeframe:
+            self._current_timeframe = timeframe
+            self._reset_stream()
+
+    def _fetch_last_closed(self, symbol: str, timeframe_const: int) -> tuple[Optional[float], Optional[int]]:
+        rates = self.mt5_service.get_close_rates(symbol, timeframe_const, 1)
+        if not rates:
+            return None, None
+        rate = rates[0]
+        close = float(rate.get("close") or 0.0)
+        ts = int(rate.get("time") or 0)
+        if close <= 0 or ts <= 0:
+            return None, ts
+        return close, ts
+
     def pop_wake_line(self) -> Optional[str]:
         line = self._wake_line
         self._wake_line = None
         return line
 
-    def step(self):
+    def step(self, timeframe_name: str, timeframe_const: int):
+        self.ensure_timeframe(timeframe_name)
         pair_name = f"{self.cfg.a}/{self.cfg.b}"
         self._wake_line = None
         pair_ts = now_ts()
@@ -356,11 +365,16 @@ class PairRuntime:
             "signal": "",
             "side": "",
             "details": "",
+            "timeframe": timeframe_name,
         }
 
+        prev_ts_a = self._last_ts_a
+        prev_ts_b = self._last_ts_b
+        prev_data_ts = self._last_data_ts
+
         try:
-            pa, age_a, same_a, st_a = get_tick_state(self.cfg.a, self.stale_seconds)
-            pb, age_b, same_b, st_b = get_tick_state(self.cfg.b, self.stale_seconds)
+            pa, ts_a = self._fetch_last_closed(self.cfg.a, timeframe_const)
+            pb, ts_b = self._fetch_last_closed(self.cfg.b, timeframe_const)
         except Exception as e:
             msg = f"MT5_ERR: {e}"
             state.update({
@@ -374,18 +388,15 @@ class PairRuntime:
         state.update({
             "pa": pa,
             "pb": pb,
-            "sameA": same_a,
-            "sameB": same_b,
         })
 
-        if pa is None or pb is None:
+        if pa is None or pb is None or ts_a is None or ts_b is None:
             fail = self.mt5_service.last_fail()
             status = "NO_TICK"
             if fail and fail[0] == IPC_FAIL:
                 status = "MT5_DOWN"
                 time.sleep(2.0)
-
-            msg = f"{status} | a={pa} b={pb} | stA={st_a} stB={st_b}"
+            msg = f"{status} | pa={pa} pb={pb}"
             if fail:
                 msg = f"{msg} | fail={fail}"
             state.update({
@@ -396,7 +407,26 @@ class PairRuntime:
             self.last_state = state
             return pair_name, msg
 
-        pair_stale = (st_a == "STALE") or (st_b == "STALE")
+        same_a = prev_ts_a is not None and prev_ts_a == ts_a
+        same_b = prev_ts_b is not None and prev_ts_b == ts_b
+        self._last_ts_a = ts_a
+        self._last_ts_b = ts_b
+        current_ts = max(ts_a, ts_b)
+        if current_ts is None:
+            current_ts = 0
+
+        if prev_data_ts is not None and current_ts <= prev_data_ts:
+            msg = f"aguardando candle ({timeframe_name})"
+            return pair_name, msg
+
+        self._last_data_ts = current_ts
+        state.update({
+            "sameA": same_a,
+            "sameB": same_b,
+        })
+
+        age_s = time.time() - current_ts
+        pair_stale = age_s > self.stale_seconds
         la = math.log(pa)
         lb = math.log(pb)
         spread = la - (self.cfg.alpha + self.cfg.beta * lb)
@@ -406,7 +436,6 @@ class PairRuntime:
             woke_up = self._was_idle and not is_idle
             spread_changed = self._last_spread is None or abs(spread - self._last_spread) > 1e-9
             if woke_up and spread_changed:
-                # Only trigger WAKE when leaving idle with a real spread movement.
                 self._wake_line = f"WAKE {pair_name} | pa={pa:.5f} pb={pb:.5f} spread={spread:+.12f}"
         self._was_idle = is_idle
         self._last_spread = spread
@@ -421,12 +450,10 @@ class PairRuntime:
                 return f"{value:.1f}s" if value is not None else "n/a"
 
             status = "STALE"
-            age_a_str = fmt_age(age_a)
-            age_b_str = fmt_age(age_b)
             msg = (
                 f"{status} | pa={pa:.5f} pb={pb:.5f} "
-                f"| ageA={age_a_str} ageB={age_b_str} "
-                f"| sameA={same_a} sameB={same_b} | stA={st_a} stB={st_b}"
+                f"| age={fmt_age(age_s)} "
+                f"| sameA={same_a} sameB={same_b}"
             )
             state.update({
                 "status": "stale",
@@ -605,10 +632,12 @@ def main(
         print("Entrada confirm mode inválido:", exc, "usando none")
         confirm_mode = EntryConfirmMode.NONE
 
+    initial_timeframe = load_timeframe_setting()
     print(
         "MULTI_MONITOR FILE =", os.path.abspath(__file__),
         "params:", top_n, enter_z, exit_band, z_window, warmup, poll_seconds, stale_seconds,
-        "confirm_mode=", confirm_mode.value, "sigma_min=", sigma_min
+        "confirm_mode=", confirm_mode.value, "sigma_min=", sigma_min,
+        "timeframe=", initial_timeframe
     )
     cfg = mt5_config or MT5Config()
     mt5_service = MT5Service(cfg)
@@ -631,6 +660,7 @@ def main(
         "stale_seconds": stale_seconds,
         "entry_confirm_mode": confirm_mode.value,
         "sigma_min": sigma_min,
+        "timeframe": initial_timeframe,
     }
 
     try:
@@ -657,28 +687,35 @@ def main(
         print(f"Multi-monitor iniciado | top_n={top_n} enter_z={enter_z} exit_band={exit_band} z_window={z_window} poll={poll_seconds}s")
         print("Pares:", ", ".join([f"{p.a}/{p.b}" for p in pairs]))
 
+        history_ts: dict[str, str] = {}
         while True:
+            timeframe_name, timeframe_const = resolve_timeframe(load_timeframe_setting())
+            monitor_state_params["timeframe"] = timeframe_name
             lines = []
             wake_lines = []
             for rt in runtimes:
-                res = rt.step()
+                res = rt.step(timeframe_name, timeframe_const)
                 wake_line = rt.pop_wake_line()
                 if wake_line:
                     wake_lines.append(wake_line)
 
                 state = rt.last_state
                 if state:
-                    append_history_entry(state["pair"], {
-                        "ts": state["last_update_ts"],
-                        "z": state.get("z"),
-                        "spread": state.get("spread"),
-                        "pa": state.get("pa"),
-                        "pb": state.get("pb"),
-                        "status": state.get("status"),
-                        "signal": state.get("signal"),
-                        "side": state.get("side"),
-                        "wake": state.get("wake"),
-                    })
+                    last = history_ts.get(state["pair"])
+                    current = state["last_update_ts"]
+                    if current != last:
+                        append_history_entry(state["pair"], {
+                            "ts": state["last_update_ts"],
+                            "z": state.get("z"),
+                            "spread": state.get("spread"),
+                            "pa": state.get("pa"),
+                            "pb": state.get("pb"),
+                            "status": state.get("status"),
+                            "signal": state.get("signal"),
+                            "side": state.get("side"),
+                            "wake": state.get("wake"),
+                        })
+                        history_ts[state["pair"]] = current
 
                 # backward-compatible unpack:
                 if len(res) == 2:
