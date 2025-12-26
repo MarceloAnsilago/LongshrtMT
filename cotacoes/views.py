@@ -83,9 +83,10 @@ class QuotesHomeView(LoginRequiredMixin, TemplateView):
         )
         ctx["logs"] = MissingQuoteLog.objects.order_by("-created_at")[:20]
 
+        limit = 200 if tickers_filter else 60
         pivot_ctx = _build_pivot_context(
             self.request,
-            max_rows=60,
+            max_rows=limit,
             tickers_filter=tickers_filter,
         )
         ctx["pivot_cols"] = pivot_ctx["cols"]
@@ -110,9 +111,10 @@ def update_quotes(request: HttpRequest):
 
 def quotes_pivot(request: HttpRequest):
     tickers_filter = _parse_ticker_filter(request)
+    limit = 200 if tickers_filter else None
     pivot_ctx = _build_pivot_context(
         request,
-        max_rows=None,
+        max_rows=limit,
         tickers_filter=tickers_filter,
     )
     return render(request, "cotacoes/quote_pivot.html",
