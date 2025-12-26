@@ -1,10 +1,15 @@
- D:\driver\Documentos\LogshorMt5> venv\Scripts\activate 
+
+& .\venv\Scripts\Activate.ps1 
+python manage.py runserver
 
 
- python -m app.run
+
+LongShortDjango
 
 
-curl "http://127.0.0.1:8000/api/monitor/history/?pair=ALOS3/BPAC11&limit=5"  # verify points non-empty when monitor is running
+celosmg1@gmail.com
 
-$root = "D:\driver\Documentos\LogshorMt5"
-wt -w 0 "new-tab -p `"Windows PowerShell`" -d `"$root`" powershell -NoExit -Command `"venv\Scripts\Activate.ps1; python manage.py runserver 0.0.0.0:8000`" ; split-pane -V -p `"Windows PowerShell`" -d `"$root`" powershell -NoExit -Command `"venv\Scripts\Activate.ps1; python -m app.run`""
+
+
+Admin
+J4!v9tQ2#Lm8sWX0

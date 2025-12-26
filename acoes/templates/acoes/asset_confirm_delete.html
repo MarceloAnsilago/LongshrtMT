@@ -1,0 +1,36 @@
+{% extends "_base.html" %}
+{% load static %}
+
+{% block extra_head %}
+<style>
+  .asset-confirm-icon {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 50%;
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    background: rgba(255, 255, 255, 0.9);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3">
+  <img
+    class="asset-confirm-icon"
+    src="https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{{ object.ticker|upper }}.png"
+    alt="{{ object.ticker }} icon"
+    loading="lazy"
+    onerror="this.style.opacity=0.3; this.style.filter='grayscale(1)'; this.title='Ícone indisponível';"
+  />
+  <h2 class="mb-0">Excluir Ativo</h2>
+</div>
+<div class="card p-3 shadow-sm rounded-3">
+  <p>Confirma excluir <strong>{{ object.ticker }}</strong> — {{ object.name }}?</p>
+  <form method="post" class="d-flex gap-2">
+    {% csrf_token %}
+    <button class="btn btn-danger">Excluir</button>
+    <a class="btn btn-outline-secondary" href="{% url 'acoes:lista' %}">Cancelar</a>
+  </form>
+</div>
+{% endblock %}

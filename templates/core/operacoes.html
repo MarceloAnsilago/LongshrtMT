@@ -1,0 +1,712 @@
+{% extends "_base.html" %}
+
+{% block content %}
+<div class="py-3">
+  <div class="mb-3">
+    <h1 class="h5 fw-semibold mb-1">Operacoes</h1>
+    <p class="text-body-secondary small mb-0">Informe manualmente o par ou carregue os dados trazidos da analise.</p>
+  </div>
+
+  {% if prefilled %}
+    <div class="alert alert-primary small mb-3">
+      Dados importados da analise. Reveja os campos antes de iniciar a operacao.
+    </div>
+  {% endif %}
+  {% if existing_operation_info %}
+    <div class="alert alert-warning d-flex flex-column gap-1 small mb-3">
+      <div><strong>Atencao:</strong> {{ existing_operation_info.message }}</div>
+      {% if existing_operation_info.opened_label %}
+        <div class="text-body-secondary">Operacao aberta em {{ existing_operation_info.opened_label }}.</div>
+      {% endif %}
+      <div>
+        <a class="alert-link" href="{{ existing_operation_info.url }}">
+          Ver detalhes da operacao em andamento ({{ existing_operation_info.pair_label }})
+        </a>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="card shadow-sm rounded-4 soft-card h-100">
+        <div class="card-body">
+          <h2 class="h6 fw-semibold mb-3">Configurar Par</h2>
+          <form id="operationDraftForm" class="row g-3" autocomplete="off" novalidate>
+            <input type="hidden" name="pair_id" value="{{ initial.pair_id }}">
+            <input type="hidden" name="source" value="{{ initial.source }}">
+            <div class="col-sm-6">
+              <label for="tickerLeft" class="form-label small text-body-secondary">Ativo esquerdo</label>
+              <input type="text"
+                     class="form-control"
+                     id="tickerLeft"
+                     name="left"
+                     placeholder="PETR4"
+                     value="{{ initial.left }}"
+                     maxlength="16">
+            </div>
+            <div class="col-sm-6">
+              <label for="tickerRight" class="form-label small text-body-secondary">Ativo direito</label>
+              <input type="text"
+                     class="form-control"
+                     id="tickerRight"
+                     name="right"
+                     placeholder="VALE3"
+                     value="{{ initial.right }}"
+                     maxlength="16">
+            </div>
+            <div class="col-sm-4">
+              <label for="windowSelect" class="form-label small text-body-secondary">Janela de referencia</label>
+              <select class="form-select" id="windowSelect" name="window">
+                {% for item in window_options %}
+                  <option value="{{ item }}" {% if item == initial.window %}selected{% endif %}>{{ item }} dias</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-sm-8 d-flex align-items-end">
+              <div class="text-body-secondary small">
+                Escolha a janela sugerida pela analise ou ajuste manualmente conforme sua estrategia.
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card shadow-sm rounded-4 h-100">
+        <div class="card-body d-flex flex-column gap-3">
+          {% if summary.note %}
+            <div class="small text-body-secondary">{{ summary.note }}</div>
+          {% endif %}
+          <div class="d-grid gap-2">
+            <div class="border rounded-3 p-3">
+              <div class="d-flex justify-content-between align-items-start">
+                <div>
+                  <div class="text-uppercase small text-danger fw-semibold">{{ summary.sell.label }}</div>
+                  <div class="fw-semibold">{{ summary.sell.ticker|default:"--" }}</div>
+                  {% if summary.sell.name %}
+                    <div class="text-body-secondary small">{{ summary.sell.name }}</div>
+                  {% endif %}
+                </div>
+                <div class="text-end">
+                  {% if summary.sell.price_label %}
+                    <div class="fw-semibold">{{ summary.sell.price_label }}</div>
+                    {% if summary.sell.source_label or summary.sell.updated_label %}
+                      <div class="text-body-tertiary small">
+                        {% if summary.sell.source_label %}{{ summary.sell.source_label }}{% endif %}
+                        {% if summary.sell.source_label and summary.sell.updated_label %}&bull; {% endif %}
+                        {% if summary.sell.updated_label %}{{ summary.sell.updated_label }}{% endif %}
+                      </div>
+                    {% endif %}
+                  {% else %}
+                    <div class="text-body-secondary small">Cotacao indisponivel.</div>
+                    {% if summary.sell.error_label %}
+                      <div class="text-danger small">{{ summary.sell.error_label }}</div>
+                    {% endif %}
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+            <div class="border rounded-3 p-3">
+              <div class="d-flex justify-content-between align-items-start">
+                <div>
+                  <div class="text-uppercase small text-success fw-semibold">{{ summary.buy.label }}</div>
+                  <div class="fw-semibold">{{ summary.buy.ticker|default:"--" }}</div>
+                  {% if summary.buy.name %}
+                    <div class="text-body-secondary small">{{ summary.buy.name }}</div>
+                  {% endif %}
+                </div>
+                <div class="text-end">
+                  {% if summary.buy.price_label %}
+                    <div class="fw-semibold">{{ summary.buy.price_label }}</div>
+                    {% if summary.buy.source_label or summary.buy.updated_label %}
+                      <div class="text-body-tertiary small">
+                        {% if summary.buy.source_label %}{{ summary.buy.source_label }}{% endif %}
+                        {% if summary.buy.source_label and summary.buy.updated_label %}&bull; {% endif %}
+                        {% if summary.buy.updated_label %}{{ summary.buy.updated_label }}{% endif %}
+                      </div>
+                    {% endif %}
+                  {% else %}
+                    <div class="text-body-secondary small">Cotacao indisponivel.</div>
+                    {% if summary.buy.error_label %}
+                      <div class="text-danger small">{{ summary.buy.error_label }}</div>
+                    {% endif %}
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+            {% if summary.pair_metrics_display %}
+            <div class="border rounded-3 p-3 bg-body-tertiary">
+              <dl class="row small mb-0">
+                <dt class="col-6 text-body-secondary">Janela</dt>
+                <dd class="col-6 text-end">{{ initial.window }} dias</dd>
+                {% for metric in summary.pair_metrics_display %}
+                  <dt class="col-6 text-body-secondary">{{ metric.label }}</dt>
+                  <dd class="col-6 text-end">{{ metric.value }}</dd>
+                {% endfor %}
+              </dl>
+              </div>
+            {% elif summary.pair_metrics_payload is not None %}
+              <div class="border rounded-3 p-3 bg-body-tertiary small text-body-secondary">
+                Métricas do par indisponíveis no momento.
+              </div>
+            {% endif %}
+          </div>
+          <p class="small text-body-tertiary mb-0">
+            Cotacoes obtidas via Yahoo Finance ao carregar a pagina. Ajuste a janela ou os tickers para atualizar.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm rounded-4 soft-card mt-3">
+  <div class="card-body">
+    <h2 class="h6 fw-semibold mb-3">Valores</h2>
+    <form method="get" class="row gy-3 gx-3">
+      {% for key, value in request.GET.items %}
+        {% if key != "valor" and key != "capital" and key != "lotes" and key != "multiplicador" %}
+          <input type="hidden" name="{{ key }}" value="{{ value }}">
+        {% endif %}
+      {% endfor %}
+      <div class="col-12 col-md-6 col-lg-5">
+        <label for="valorOperacao" class="form-label small text-body-secondary">Valor disponivel</label>
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">R$</span>
+          <input type="text"
+                 class="form-control"
+                 id="valorOperacao"
+                 name="valor"
+                 inputmode="decimal"
+                 placeholder="10000.00"
+                 value="{{ valuation.input_display }}">
+        </div>
+        {% if valuation.suggested_label %}
+          <div class="form-text text-body-secondary">
+            Valor minimo recomendado: {{ valuation.suggested_label }}
+            {% if valuation.input_adjusted %}
+              (ajustado automaticamente)
+            {% endif %}
+          </div>
+        {% endif %}
+        {% if valuation.input_adjusted_message %}
+          <div class="form-text text-warning">{{ valuation.input_adjusted_message }}</div>
+        {% endif %}
+      </div>
+      <div class="col-12 col-md-4 col-lg-3">
+        <label for="lotesOperacao" class="form-label small text-body-secondary">
+          Multiplicador de lotes
+        </label>
+        <div class="input-group input-group-sm">
+          <input type="number"
+                 class="form-control"
+                 id="lotesOperacao"
+                 name="lotes"
+                 min="1"
+                 max="999"
+                 step="1"
+                 value="{{ valuation.lot_multiplier }}">
+          <span class="input-group-text">&times; {{ valuation.lot_size }}</span>
+        </div>
+        <div class="form-text text-body-secondary">
+          Total alvo: {{ valuation.target_shares }} acoes
+        </div>
+      </div>
+      <div class="col-12 col-md-2 col-lg-2 d-flex align-items-end">
+        <div class="d-grid w-100">
+          <button type="submit" class="btn btn-outline-primary btn-sm">
+            Calcular
+          </button>
+        </div>
+      </div>
+    </form>
+
+    {% if valuation.error %}
+      <div class="alert alert-warning small mt-3 mb-0">{{ valuation.error }}</div>
+    {% elif valuation.has_result %}
+      <div class="row g-3 mt-3">
+        <div class="col-12 col-lg-4">
+          <div class="card shadow-sm h-100 border-0 bg-body-tertiary">
+            <div class="card-body small">
+              <h3 class="h6 fw-semibold text-body-secondary mb-3">Venda (short)</h3>
+              <dl class="row mb-0 gy-1">
+                <dt class="col-6 text-body-tertiary">Lotes ({{ valuation.lot_size }})</dt>
+                <dd class="col-6 fw-semibold text-body-emphasis">{{ valuation.lots }}</dd>
+                <dt class="col-6 text-body-tertiary">Ativo</dt>
+                <dd class="col-6">{{ valuation.sell_asset_label }}</dd>
+                <dt class="col-6 text-body-tertiary">Multiplicador</dt>
+                <dd class="col-6">{{ valuation.lot_multiplier }} &times; {{ valuation.lot_size }} ({{ valuation.target_shares }} acoes)</dd>
+                <dt class="col-6 text-body-tertiary">Quantidade</dt>
+                <dd class="col-6">{{ valuation.shares }} acoes</dd>
+                <dt class="col-6 text-body-tertiary">Preco unitario</dt>
+                <dd class="col-6">{{ valuation.sell_unit_label }}</dd>
+                <dt class="col-6 text-body-tertiary">Valor por lote</dt>
+                <dd class="col-6">{{ valuation.sell_lot_notional_label }}</dd>
+                <dt class="col-6 text-body-tertiary">Total vendido</dt>
+                <dd class="col-6">{{ valuation.sell_label }}</dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+        <div class="col-12 col-lg-4">
+          <div class="card shadow-sm h-100 border-0 bg-body-tertiary">
+            <div class="card-body small">
+              <h3 class="h6 fw-semibold text-body-secondary mb-3">Compra (long)</h3>
+              <dl class="row mb-0 gy-1">
+                <dt class="col-6 text-body-tertiary">Lotes ({{ valuation.lot_size }})</dt>
+                <dd class="col-6 fw-semibold text-body-emphasis">{{ valuation.buy_lots }}</dd>
+                <dt class="col-6 text-body-tertiary">Ativo</dt>
+                <dd class="col-6">{{ valuation.buy_asset_label }}</dd>
+                <dt class="col-6 text-body-tertiary">Quantidade</dt>
+                <dd class="col-6">{{ valuation.shares_buy|default:valuation.shares }} acoes</dd>
+                <dt class="col-6 text-body-tertiary">Preco unitario</dt>
+                <dd class="col-6">{{ valuation.buy_unit_label }}</dd>
+                <dt class="col-6 text-body-tertiary">Valor por lote</dt>
+                <dd class="col-6">{{ valuation.buy_lot_notional_label }}</dd>
+                <dt class="col-6 text-body-tertiary">Total comprado</dt>
+                <dd class="col-6">{{ valuation.buy_label }}</dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+        <div class="col-12 col-lg-4">
+          <div class="card shadow-sm h-100 border-0 bg-body-tertiary">
+            <div class="card-body small d-flex flex-column">
+              <h3 class="h6 fw-semibold text-body-secondary mb-3">Resultados</h3>
+              <dl class="row mb-3 gy-1">
+                <dt class="col-6 text-body-tertiary">Proporcao long/short</dt>
+                <dd class="col-6">{{ valuation.proporcao_label }}</dd>
+                {% if valuation.capital_informado_label %}
+                  <dt class="col-6 text-body-tertiary">Capital informado</dt>
+                  <dd class="col-6">{{ valuation.capital_informado_label }}</dd>
+                {% endif %}
+                <dt class="col-6 text-body-tertiary">Capital utilizado</dt>
+                <dd class="col-6">{{ valuation.capital_label }}</dd>
+                <dt class="col-6 text-body-tertiary">Saldo</dt>
+                <dd class="col-6">{{ valuation.net_label }} ({{ valuation.net_direction }})</dd>
+                <dt class="col-6 text-body-tertiary">Valor minimo recomendado</dt>
+                <dd class="col-6">{{ valuation.minimum_label }}</dd>
+                <dt class="col-6 text-body-tertiary">Total alvo</dt>
+                <dd class="col-6">{{ valuation.target_shares }} acoes</dd>
+              </dl>
+              <p class="small text-body-secondary mb-0 mt-auto">{{ valuation.description }}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+<div class="d-grid d-md-flex justify-content-md-end mt-3">
+  <button type="button"
+          class="btn btn-primary"
+          disabled
+          title="Fluxo de execucao sera habilitado em breve">
+    Operar
+  </button>
+</div>
+
+
+{% if valuation.has_result %}
+<div class="card shadow-sm rounded-4 soft-card mt-3">
+  <div class="card-body">
+    <h2 class="h6 fw-semibold mb-3">Boleta</h2>
+
+    <form id="ticketForm" class="row g-3" autocomplete="off" novalidate>
+      {% csrf_token %}
+      <!-- Contexto para o backend -->
+      <input type="hidden" name="pair_id" value="{{ initial.pair_id }}">
+      <input type="hidden" name="left" value="{{ initial.left }}">
+      <input type="hidden" name="right" value="{{ initial.right }}">
+      <input type="hidden" name="window" value="{{ initial.window }}">
+      <input type="hidden" name="lot_size" value="{{ valuation.lot_size }}">
+      <input type="hidden" name="lot_multiplier" id="lotMultiplierHidden" value="{{ valuation.lot_multiplier }}">
+      <input type="hidden" name="capital" id="capitalHidden" value="{{ valuation.capital_value|default:'' }}">
+      <input type="hidden" name="sell_price" value="{{ valuation.result_payload.preco_short|default:'' }}">
+      <input type="hidden" name="buy_price" value="{{ valuation.result_payload.preco_long|default:'' }}">
+
+      <!-- Lados e quantidades (serão atualizados via JS) -->
+      <input type="hidden" name="sell_ticker" value="{{ summary.sell.ticker|default:initial.left }}">
+      <input type="hidden" name="buy_ticker"  value="{{ summary.buy.ticker|default:initial.right }}">
+      <input type="hidden" name="sell_qty"    id="sellQtyHidden" value="{{ valuation.shares }}">
+      <input type="hidden" name="buy_qty"     id="buyQtyHidden"  value="{{ valuation.shares_buy|default:valuation.shares }}">
+
+      <div class="col-12 col-xl-8">
+        <div class="row g-3">
+          <!-- Card Vender -->
+          <div class="col-12 col-md-6">
+            <div class="card h-100 border-0 bg-body-tertiary">
+              <div class="card-body small">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div>
+                    <div class="text-uppercase small text-danger fw-semibold">Vender</div>
+                    <div class="fw-semibold">{{ summary.sell.ticker|default:"--" }}</div>
+                    {% if summary.sell.name %}
+                      <div class="text-body-secondary small">{{ summary.sell.name }}</div>
+                    {% endif %}
+                  </div>
+                  <div class="text-end">
+                    {% if summary.sell.price_label %}
+                      <div class="fw-semibold">{{ summary.sell.price_label }}</div>
+                      {% if summary.sell.source_label or summary.sell.updated_label %}
+                        <div class="text-body-tertiary small">
+                          {% if summary.sell.source_label %}{{ summary.sell.source_label }}{% endif %}
+                          {% if summary.sell.source_label and summary.sell.updated_label %}&bull; {% endif %}
+                          {% if summary.sell.updated_label %}{{ summary.sell.updated_label }}{% endif %}
+                        </div>
+                      {% endif %}
+                    {% else %}
+                      <div class="text-body-secondary small">Cotação indisponível</div>
+                    {% endif %}
+                  </div>
+                </div>
+
+                <hr class="my-2">
+
+                <dl class="row mb-0 gy-1">
+                  <dt class="col-7 text-body-tertiary">Lotes ({{ valuation.lot_size }})</dt>
+                  <dd class="col-5 text-end">
+                    <input
+                      type="number"
+                      id="sellLotsInput"
+                      class="form-control form-control-sm text-end"
+                      style="max-width: 120px; display: inline-block;"
+                      min="1" step="1"
+                      value="{{ valuation.lots }}"
+                      data-lot-size="{{ valuation.lot_size }}"
+                      data-unit="{{ valuation.sell_unit|default:0 }}">
+                  </dd>
+
+                  <dt class="col-7 text-body-tertiary">Qtd. ações</dt>
+                  <dd class="col-5 text-end" id="sellSharesText">{{ valuation.shares }} ações</dd>
+
+                  <dt class="col-7 text-body-tertiary">Preço unitário</dt>
+                  <dd class="col-5 text-end" id="sellUnitText">{{ valuation.sell_unit_label }}</dd>
+
+                  <dt class="col-7 text-body-tertiary">Total (venda)</dt>
+                  <dd class="col-5 text-end fw-semibold" id="sellTotalText">{{ valuation.sell_label }}</dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card Comprar -->
+          <div class="col-12 col-md-6">
+            <div class="card h-100 border-0 bg-body-tertiary">
+              <div class="card-body small">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div>
+                    <div class="text-uppercase small text-success fw-semibold">Comprar</div>
+                    <div class="fw-semibold">{{ summary.buy.ticker|default:"--" }}</div>
+                    {% if summary.buy.name %}
+                      <div class="text-body-secondary small">{{ summary.buy.name }}</div>
+                    {% endif %}
+                  </div>
+                  <div class="text-end">
+                    {% if summary.buy.price_label %}
+                      <div class="fw-semibold">{{ summary.buy.price_label }}</div>
+                      {% if summary.buy.source_label or summary.buy.updated_label %}
+                        <div class="text-body-tertiary small">
+                          {% if summary.buy.source_label %}{{ summary.buy.source_label }}{% endif %}
+                          {% if summary.buy.source_label and summary.buy.updated_label %}&bull; {% endif %}
+                          {% if summary.buy.updated_label %}{{ summary.buy.updated_label }}{% endif %}
+                        </div>
+                      {% endif %}
+                    {% else %}
+                      <div class="text-body-secondary small">Cotação indisponível</div>
+                    {% endif %}
+                  </div>
+                </div>
+
+                <hr class="my-2">
+
+                <dl class="row mb-0 gy-1">
+                  <dt class="col-7 text-body-tertiary">Lotes ({{ valuation.lot_size }})</dt>
+                  <dd class="col-5 text-end">
+                    <input
+                      type="number"
+                      id="buyLotsInput"
+                      class="form-control form-control-sm text-end"
+                      style="max-width: 120px; display: inline-block;"
+                      min="1" step="1"
+                      value="{{ valuation.buy_lots }}"
+                      data-lot-size="{{ valuation.lot_size }}"
+                      data-unit="{{ valuation.buy_unit|default:0 }}">
+                  </dd>
+
+                  <dt class="col-7 text-body-tertiary">Qtd. ações</dt>
+                  <dd class="col-5 text-end" id="buySharesText">{{ valuation.shares_buy|default:valuation.shares }} ações</dd>
+
+                  <dt class="col-7 text-body-tertiary">Preço unitário</dt>
+                  <dd class="col-5 text-end" id="buyUnitText">{{ valuation.buy_unit_label }}</dd>
+
+                  <dt class="col-7 text-body-tertiary">Total (compra)</dt>
+                  <dd class="col-5 text-end fw-semibold" id="buyTotalText">{{ valuation.buy_label }}</dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Estratificação + modo de execução -->
+      <div class="col-12 col-xl-4">
+        <div class="card h-100 border-0 bg-body-tertiary">
+          <div class="card-body d-flex flex-column">
+            <h3 class="h6 fw-semibold text-body-secondary mb-3">Estratificação</h3>
+
+            <dl class="row small gy-1 mb-3">
+              <dt class="col-7 text-body-tertiary">Recebe na venda</dt>
+              <dd class="col-5 text-end" id="receiveText">{{ valuation.sell_label }}</dd>
+
+              <dt class="col-7 text-body-tertiary">Paga na compra</dt>
+              <dd class="col-5 text-end" id="payText">{{ valuation.buy_label }}</dd>
+
+              <dt class="col-7 text-body-tertiary">Custos / Taxas</dt>
+              <dd class="col-5 text-end" id="feesText">—</dd>
+
+              <dt class="col-7 text-body-tertiary">Saldo</dt>
+              <dd class="col-5 text-end" id="netText">
+                {{ valuation.net_label }} <span class="text-body-tertiary">({{ valuation.net_direction }})</span>
+              </dd>
+            </dl>
+
+            <div class="form-check form-switch mb-2">
+              <input class="form-check-input" type="checkbox" id="realSwitch" name="is_real" value="1">
+              <label class="form-check-label small" for="realSwitch">Conta real (desmarcado = simulação)</label>
+            </div>
+
+            <button type="button"
+                    class="btn btn-success mt-auto"
+                    id="startTicketBtn"
+                    data-role="start-ticket">
+              Iniciar
+            </button>
+
+            <div id="ticketFeedback" class="alert alert-danger small d-none mt-3" role="alert"></div>
+
+            <p class="small text-body-tertiary mb-0 mt-2">
+              Esta boleta é uma simulação visual. A execução real será conectada no próximo passo.
+            </p>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Script de atualização automática -->
+<script>
+(function () {
+  function fmtBRL(n) {
+    return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  // Converte "R$ 51,29" -> 51.29
+  function parseMoneyBR(text) {
+    if (!text) return NaN;
+    // remove tudo exceto dígitos, vírgula, ponto e sinal
+    let s = text.toString().trim().replace(/[^\d.,-]/g, '');
+    // remove separadores de milhar (pontos antes de milhares)
+    s = s.replace(/\.(?=\d{3}(?:\D|$))/g, '');
+    // vírgula decimal -> ponto
+    s = s.replace(',', '.');
+    const n = parseFloat(s);
+    return isNaN(n) ? NaN : n;
+  }
+  function clampInt(v, min) {
+    const n = Math.floor(Number(v || 0));
+    return isFinite(n) && n >= min ? n : min;
+  }
+
+  const sellLotsInput = document.getElementById('sellLotsInput');
+  const buyLotsInput  = document.getElementById('buyLotsInput');
+  if (!sellLotsInput || !buyLotsInput) return;
+
+  // elementos de saída — venda
+  const sellSharesText = document.getElementById('sellSharesText');
+  const sellUnitText   = document.getElementById('sellUnitText');
+  const sellTotalText  = document.getElementById('sellTotalText');
+
+  // elementos de saída — compra
+  const buySharesText  = document.getElementById('buySharesText');
+  const buyUnitText    = document.getElementById('buyUnitText');
+  const buyTotalText   = document.getElementById('buyTotalText');
+
+  // estratificação
+  const receiveText    = document.getElementById('receiveText');
+  const payText        = document.getElementById('payText');
+  const netText        = document.getElementById('netText');
+
+  // hidden (submit)
+  const sellQtyHidden  = document.getElementById('sellQtyHidden');
+  const buyQtyHidden   = document.getElementById('buyQtyHidden');
+  const lotMultiplierHidden = document.getElementById('lotMultiplierHidden');
+  const capitalHidden = document.getElementById('capitalHidden');
+  const sellPriceHidden = document.querySelector('input[name="sell_price"]');
+  const buyPriceHidden  = document.querySelector('input[name="buy_price"]');
+
+  // base
+  const lotSizeAttr = Number(sellLotsInput.dataset.lotSize || 100);
+  let sellUnit = Number(sellLotsInput.dataset.unit);
+  let buyUnit  = Number(buyLotsInput.dataset.unit);
+
+  // fallback: se não veio numérico nos data-attributes, parseia do texto visível
+  if (!sellUnit) sellUnit = parseMoneyBR(sellUnitText?.textContent);
+  if (!buyUnit)  buyUnit  = parseMoneyBR(buyUnitText?.textContent);
+
+  // se ainda não conseguiu, zera para evitar NaN
+  if (!isFinite(sellUnit)) sellUnit = 0;
+  if (!isFinite(buyUnit))  buyUnit  = 0;
+
+  function recalc() {
+    const sellLots = clampInt(sellLotsInput.value, 1);
+    const buyLots  = clampInt(buyLotsInput.value, 1);
+
+    if (sellLotsInput.value != sellLots) sellLotsInput.value = sellLots;
+    if (buyLotsInput.value  != buyLots)  buyLotsInput.value  = buyLots;
+
+    const lotSize    = lotSizeAttr > 0 ? lotSizeAttr : 100;
+    const sellShares = sellLots * lotSize;
+    const buyShares  = buyLots  * lotSize;
+
+    const sellTotal  = sellShares * sellUnit;
+    const buyTotal   = buyShares  * buyUnit;
+
+    // atualiza textos
+    sellSharesText.textContent = `${sellShares} ações`;
+    buySharesText.textContent  = `${buyShares} ações`;
+    sellTotalText.textContent  = fmtBRL(sellTotal);
+    buyTotalText.textContent   = fmtBRL(buyTotal);
+
+    // estratificação
+    receiveText.textContent = fmtBRL(sellTotal);
+    payText.textContent     = fmtBRL(buyTotal);
+    const net    = sellTotal - buyTotal;
+    const dirLbl = net >= 0 ? 'recebe' : 'paga';
+    netText.innerHTML = `${fmtBRL(Math.abs(net))} <span class="text-body-tertiary">(${dirLbl})</span>`;
+
+    // hidden para submit
+    if (sellQtyHidden) sellQtyHidden.value = sellShares;
+    if (buyQtyHidden)  buyQtyHidden.value  = buyShares;
+    if (lotMultiplierHidden) lotMultiplierHidden.value = sellLots;
+    if (capitalHidden) capitalHidden.value = sellTotal.toFixed(2);
+    if (sellPriceHidden) sellPriceHidden.value = isFinite(sellUnit) ? sellUnit.toFixed(6) : '';
+    if (buyPriceHidden)  buyPriceHidden.value  = isFinite(buyUnit)  ? buyUnit.toFixed(6)  : '';
+  }
+
+  // recalcula em digitação e seta inicial
+  sellLotsInput.addEventListener('input', recalc);
+  buyLotsInput.addEventListener('input', recalc);
+  recalc();
+})();
+</script>
+
+<script>
+(function () {
+  const form = document.getElementById('ticketForm');
+  const submitBtn = document.getElementById('startTicketBtn');
+  const feedbackBox = document.getElementById('ticketFeedback');
+  if (!form || !submitBtn) return;
+
+  const endpoint = form.getAttribute('action') || window.location.href;
+
+  function showFeedback(messages, isError = true) {
+    if (!feedbackBox) {
+      if (Array.isArray(messages)) {
+        alert(messages.join('\n'));
+      } else if (messages) {
+        alert(messages);
+      }
+      return;
+    }
+    const content = Array.isArray(messages) ? messages.join('<br>') : String(messages || '');
+    feedbackBox.innerHTML = content;
+    feedbackBox.classList.remove('d-none', 'alert-success', 'alert-danger');
+    feedbackBox.classList.add(isError ? 'alert-danger' : 'alert-success');
+  }
+
+  function hideFeedback() {
+    if (feedbackBox) {
+      feedbackBox.classList.add('d-none');
+      feedbackBox.textContent = '';
+    }
+  }
+
+  async function handleSubmit() {
+    const csrfInput = form.querySelector('input[name="csrfmiddlewaretoken"]');
+    const csrfToken = csrfInput ? csrfInput.value : '';
+    hideFeedback();
+
+    const originalText = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Salvando...';
+
+    try {
+      const formData = new FormData(form);
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'X-CSRFToken': csrfToken,
+        },
+        credentials: 'same-origin',
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        if (data && data.errors) {
+          showFeedback(data.errors);
+        } else if (data && data.detail) {
+          showFeedback(data.detail);
+        } else {
+          showFeedback('Nao foi possivel salvar a operacao agora. Tente novamente em instantes.');
+        }
+        return;
+      }
+
+      if (!data) {
+        showFeedback('Nao foi possivel interpretar a resposta do servidor.');
+        return;
+      }
+
+      if (!data.ok) {
+        showFeedback(data.errors || 'Nao foi possivel salvar a operacao.');
+        return;
+      }
+
+      if (feedbackBox) {
+        showFeedback('Operacao salva com sucesso! Redirecionando...', false);
+      }
+
+      if (data.redirect) {
+        window.location.href = data.redirect;
+      } else {
+        window.location.reload();
+      }
+    } catch (err) {
+      console.error(err);
+      showFeedback('Erro inesperado ao enviar a operacao.');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalText;
+    }
+  }
+
+  submitBtn.addEventListener('click', function (ev) {
+    ev.preventDefault();
+    handleSubmit();
+  });
+})();
+</script>
+
+{% endif %}
+
+
+
+
+
+
+{% endblock %}

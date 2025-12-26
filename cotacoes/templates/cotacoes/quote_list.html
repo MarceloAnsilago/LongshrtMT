@@ -1,0 +1,164 @@
+{% extends "_base.html" %}
+{% load static %}
+{% block content %}
+<main class="container my-3">
+  <div class="card rounded-3 shadow-sm mb-3">
+    <div class="card-body d-flex justify-content-between align-items-center">
+      <div>
+        <h5 class="mb-0">Cotações</h5>
+        <small class="text-muted">Atualizar faltantes / últimas 300 (Stooq → Yahoo fallback).</small>
+      </div>
+
+      <div class="d-flex gap-2">
+        <!-- BOTÃO COM SPINNER -->
+        <a id="btnUpdate" class="btn btn-outline-primary" href="{% url 'cotacoes:update' %}">
+          <span class="spinner-border spinner-border-sm me-2 d-none" id="spUpdate" role="status" aria-hidden="true"></span>
+          <i class="bi bi-arrow-clockwise" id="icoUpdate"></i>
+          <span id="txtUpdate">Atualizar Cotações</span>
+        </a>
+
+        <a class="btn btn-outline-info" href="{% url 'cotacoes:pivot' %}">
+          <i class="bi bi-layout-three-columns"></i> Tabela dinâmica (tela cheia)
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="card rounded-3 shadow-sm mb-3">
+    <div class="card-body">
+      <form method="get" class="d-flex flex-wrap gap-2 align-items-center">
+        <label class="visually-hidden" for="tickerFilter">Filtrar tickers</label>
+        <input
+          id="tickerFilter"
+          name="tickers"
+          class="form-control form-control-sm"
+          style="min-width:260px;"
+          type="search"
+          placeholder="Filtrar colunas por ticker (ex: PETR4,VALE3)"
+        value="{{ ticker_input|default:'' }}"
+        />
+        <button type="submit" class="btn btn-outline-primary btn-sm">Aplicar filtro</button>
+        <a class="btn btn-outline-secondary btn-sm" href="{% url 'cotacoes:home' %}">Limpar filtro</a>
+        <div class="small text-muted">
+          Separe múltiplos tickers por vírgula; apenas as colunas encontradas serão exibidas.
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <!-- ESQUERDA: PIVOT -->
+    <div class="col-lg-8">
+      <div class="card rounded-3 shadow-sm">
+        <div class="card-header bg-transparent">
+          <strong>Tabela de Cotações (Pivot)</strong>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive" style="overflow-x:auto;">
+            <table class="table table-bordered table-sm align-middle text-nowrap">
+              <thead class="table-light">
+                <tr>
+                  <th style="min-width:110px;">Data</th>
+                  {% for col in pivot_cols %}
+                    <th class="text-end">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in pivot_rows %}
+                  <tr>
+                    <td>{{ row.date|date:"d/m/Y" }}</td>
+                    {% for v in row.values %}
+                      <td class="text-end">{% if v != '' %}{{ v|floatformat:2 }}{% endif %}</td>
+                    {% endfor %}
+                  </tr>
+                {% empty %}
+                  <tr>
+                    <td colspan="{{ pivot_cols|length|add:'1' }}" class="text-center text-muted">
+                      Sem dados.
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <small class="text-muted">Dica: arraste para o lado para ver todos os ativos.</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- DIREITA: LOGS -->
+    <div class="col-lg-4">
+      <div class="card rounded-3 shadow-sm">
+        <div class="card-header bg-transparent"><strong>Logs de faltantes</strong></div>
+        <div class="card-body">
+          <ul class="list-group list-group-flush">
+            {% for log in logs %}
+              <li class="list-group-item">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div>
+                    <span class="badge text-bg-secondary">{{ log.asset.ticker }}</span>
+                    <small class="text-muted">{{ log.created_at|date:"d/m/Y H:i" }}</small><br>
+                    <span class="small d-block mt-1">
+                      {{ log.reason }} — {{ log.detail|truncatechars:80 }}
+                    </span>
+                  </div>
+
+                  {% if log.resolved_bool %}
+                    <span class="badge text-bg-success">ok</span>
+                  {% else %}
+                    <div class="text-end">
+                      <span class="badge text-bg-warning">pendente</span>
+                      <div>
+                        <a href="{% url 'cotacoes:faltantes_detail' log.asset.ticker %}"
+                          class="btn btn-sm btn-warning mt-1"
+                          style="--bs-btn-padding-y:.10rem; --bs-btn-padding-x:.45rem; --bs-btn-font-size:.75rem;">
+                          Verificar
+                        </a>
+                      </div>
+                    </div>
+                  {% endif %}
+                </div>
+              </li>
+            {% empty %}
+              <li class="list-group-item text-muted">Sem logs.</li>
+            {% endfor %}
+          </ul>
+
+          <!-- Botão 'Limpar' -->
+          <div class="mt-3 text-end">
+            <form method="post" action="{% url 'cotacoes:logs_clear' %}"
+                  onsubmit="return confirm('Tem certeza que deseja limpar os logs?');">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-outline-secondary btn-sm">
+                Limpar
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Script do spinner -->
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const btn = document.getElementById('btnUpdate');
+  if (!btn) return;
+
+  const sp  = document.getElementById('spUpdate');
+  const ico = document.getElementById('icoUpdate');
+  const txt = document.getElementById('txtUpdate');
+
+  btn.addEventListener('click', function () {
+    // mostra spinner e desabilita botão imediatamente
+    sp.classList.remove('d-none');
+    if (ico) ico.classList.add('d-none');
+    if (txt) txt.textContent = 'Atualizando...';
+    btn.classList.add('disabled');
+    btn.setAttribute('aria-disabled', 'true');
+  }, { passive: true });
+});
+</script>
+{% endblock %}

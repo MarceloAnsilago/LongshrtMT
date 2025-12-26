@@ -1,0 +1,180 @@
+{% load static %}
+<!doctype html>
+<html lang="pt-br" data-bs-theme="light">
+
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Long & Short{% endblock %}</title>
+
+    <!-- Bootstrap 5.3 + Icons (CDN) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+
+    <!-- Soft UI (com cache-bust) -->
+    <link href="{% static 'css/soft-ui.css' %}?v=4" rel="stylesheet">
+
+    <!-- Tema (aplica e persiste claro/escuro) — APENAS UMA VEZ -->
+    <script defer src="{% static 'js/theme.js' %}?v=5"></script>
+    <style>
+      .sidebar-header {
+        background: linear-gradient(135deg, rgba(88, 101, 242, 0.95), rgba(88, 216, 255, 0.9));
+        border-radius: 0 0 1.5rem 1.5rem;
+      }
+      .sidebar-avatar {
+        width: 48px;
+        height: 48px;
+        font-weight: 600;
+      }
+      .sidebar-link {
+        border-left: 3px solid transparent;
+        transition: background 0.2s, border-color 0.2s;
+      }
+      .sidebar-link:hover {
+        background-color: rgba(13, 110, 253, 0.05);
+      }
+      .sidebar-link.active {
+        border-color: #3b82f6;
+        background-color: rgba(59, 130, 246, 0.15);
+        font-weight: 600;
+      }
+      .sidebar-footer {
+        background: rgba(255, 255, 255, 0.03);
+      }
+    </style>
+
+    {% block extra_head %}{% endblock %}
+  </head>
+  <body class="bg-body-tertiary">
+
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg bg-body shadow-sm">
+      <div class="container-fluid">
+        <button class="btn btn-outline-secondary btn-sm me-2"
+                data-bs-toggle="offcanvas" data-bs-target="#appSidebar" aria-controls="appSidebar">
+          <i class="bi bi-list"></i>
+        </button>
+
+        <a class="navbar-brand fw-semibold" href="{% url 'core:home' %}">
+          Long & Short
+        </a>
+
+        <div class="d-flex align-items-center ms-auto gap-2">
+          <!-- Dark Toggle (único) -->
+          <button type="button" class="btn btn-outline-secondary btn-sm"
+                  title="Alternar tema" id="themeToggle" data-toggle-theme>
+            <i class="bi bi-moon-stars"></i>
+          </button>
+          {% if request.user.is_authenticated %}
+            <span class="text-secondary small d-none d-sm-inline">Olá, {{ request.user.username }}</span>
+          {% endif %}
+        </div>
+      </div>
+    </nav>
+
+    <!-- Sidebar Offcanvas -->
+    <div class="offcanvas offcanvas-start" tabindex="-1" id="appSidebar" aria-labelledby="appSidebarLabel">
+      <div class="offcanvas-header border-bottom">
+        <div>
+          <h5 class="offcanvas-title mb-0" id="appSidebarLabel">Menu</h5>
+          <small class="text-muted">Acesse suas ferramentas chave</small>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Fechar"></button>
+      </div>
+      <div class="offcanvas-body p-0 d-flex flex-column h-100">
+        <div class="sidebar-header px-3 py-4 text-white d-flex align-items-center gap-3">
+          <div class="sidebar-avatar bg-white text-primary rounded-circle d-flex align-items-center justify-content-center shadow-sm">
+            {% if request.user.is_authenticated %}
+              {{ request.user.username|slice:":1"|upper }}
+            {% else %}
+              L
+            {% endif %}
+          </div>
+          <div>
+              {% if request.user.is_authenticated %}
+                <div class="fw-semibold">{{ request.user.get_full_name|default:request.user.username }}</div>
+                <div class="text-white-50 small">Conta conectada</div>
+              {% else %}
+                <div class="fw-semibold">Long & Short</div>
+                <div class="text-white-50 small">Faça login para personalizar</div>
+              {% endif %}
+          </div>
+        </div>
+        <div class="px-2 flex-fill">
+          <ul class="nav nav-pills flex-column gap-1">
+            <li class="nav-item">
+              <a class="nav-link sidebar-link d-flex align-items-center gap-2 {% if current == 'home' %}active{% endif %}" href="{% url 'core:home' %}">
+                <i class="bi bi-house-door"></i><span>Início</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link sidebar-link d-flex align-items-center gap-2 {% if current == 'acoes' %}active{% endif %}" href="{% url 'acoes:lista' %}">
+                <i class="bi bi-briefcase"></i><span>Ações</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link sidebar-link d-flex align-items-center gap-2 {% if current == 'pares' %}active{% endif %}" href="{% url 'pairs:home' %}">
+                <i class="bi bi-shuffle"></i><span>Pares</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link sidebar-link d-flex align-items-center gap-2 {% if current == 'cotacoes' %}active{% endif %}" href="{% url 'cotacoes:home' %}">
+                <i class="bi bi-bar-chart-line"></i><span>Cotações</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link sidebar-link d-flex align-items-center gap-2 {% if current == 'analise' %}active{% endif %}" href="{% url 'pairs:analysis' %}">
+                <i class="bi bi-graph-up"></i><span>Análise</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link sidebar-link d-flex align-items-center gap-2 {% if current == 'operacoes' %}active{% endif %}" href="{% url 'core:operacoes' %}">
+                <i class="bi bi-activity"></i><span>Operações</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link sidebar-link d-flex align-items-center gap-2 {% if current == 'encerradas' %}active{% endif %}" href="{% url 'core:encerradas' %}">
+                <i class="bi bi-check2-circle"></i><span>Encerradas</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link sidebar-link d-flex align-items-center gap-2 {% if current == 'faltantes' %}active{% endif %}" href="{% url 'cotacoes:faltantes_home' %}">
+                <i class="bi bi-exclamation-triangle"></i><span>Faltantes</span>
+              </a>
+            </li>
+            <li class="nav-item mt-2">
+              <a class="nav-link sidebar-link d-flex align-items-center gap-2 {% if current == 'config' %}active{% endif %}" href="{% url 'core:config' %}">
+                <i class="bi bi-gear"></i><span>Configurações</span>
+              </a>
+            </li>
+          </ul>
+        </div>
+        <div class="sidebar-footer px-3 py-3 border-top small text-muted">
+          <div class="d-flex justify-content-between align-items-center">
+            <span>Theme</span>
+            <span class="badge text-bg-secondary" id="themeBadge">light</span>
+          </div>
+          <p class="mt-2 mb-0 small text-muted">Ajuste o tema com o botão no topo da página.</p>
+        </div>
+      </div>
+    </div>
+    <!-- Conteúdo com gutter -->
+    <main class="container my-3">
+      {% if messages %}
+        {% for message in messages %}
+          <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+
+      {% block content %}{% endblock %}
+    </main>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+    {% block extra_js %}{% endblock %}
+  </body>
+</html>

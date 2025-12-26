@@ -1,0 +1,108 @@
+{% extends "_base.html" %}
+{% load static %}
+{% load widget_tweaks %}
+
+{% block extra_head %}
+<style>
+  .asset-form-icon {
+    width: 36px;
+    height: 36px;
+    object-fit: cover;
+    border-radius: 50%;
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    background: rgba(255, 255, 255, 0.8);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 class="mb-3 d-flex align-items-center gap-2">
+  {{ view.object|yesno:"Editar Ativo,Novo Ativo" }}
+  {% if view.object %}
+    <img
+      class="asset-form-icon"
+      src="https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{{ view.object.ticker|upper }}.png"
+      alt="{{ view.object.ticker }} icon"
+      loading="lazy"
+      onerror="this.style.opacity=0.3; this.style.filter='grayscale(1)'; this.title='Ícone indisponível';"
+    />
+  {% endif %}
+</h2>
+
+<form method="post" class="card p-3 p-md-4 shadow-sm rounded-3">
+  {% csrf_token %}
+
+  {% if form.non_field_errors %}
+    <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+  {% endif %}
+
+  <div class="row g-3">
+    <div class="col-12 col-md-4">
+      <label class="form-label" for="{{ form.ticker.id_for_label }}">Ticker</label>
+      {{ form.ticker|add_class:"form-control text-uppercase" }}
+      {{ form.ticker.errors }}
+    </div>
+
+    <div class="col-12 col-md-4">
+      <label class="form-label" for="{{ form.ticker_yf.id_for_label }}">Yahoo Finance</label>
+      {{ form.ticker_yf|add_class:"form-control text-uppercase" }}
+      <div class="form-text">Adiciona <code>.SA</code> automaticamente quando necessário.</div>
+      {{ form.ticker_yf.errors }}
+    </div>
+
+    <div class="col-12 col-md-4">
+      <label class="form-label" for="{{ form.name.id_for_label }}">Nome</label>
+      {{ form.name|add_class:"form-control" }}
+      {{ form.name.errors }}
+    </div>
+
+    <div class="col-12 d-flex align-items-center gap-3">
+      <div class="form-check">
+        {{ form.is_active|add_class:"form-check-input" }}
+        <label class="form-check-label ms-1" for="{{ form.is_active.id_for_label }}">Ativa</label>
+      </div>
+      {{ form.is_active.errors }}
+    </div>
+  </div>
+
+  <div class="d-flex gap-2 mt-4">
+    <button class="btn btn-primary">Salvar</button>
+    <a class="btn btn-outline-secondary" href="{% url 'acoes:lista' %}">Cancelar</a>
+  </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const fTicker = document.getElementById('id_ticker');
+  const fYF = document.getElementById('id_ticker_yf');
+
+  function ensureYFFormat() {
+    if (!fYF) return;
+    let yf = (fYF.value || '').toUpperCase().trim();
+    if (!yf && fTicker?.value) {
+      yf = fTicker.value.toUpperCase().trim();
+    }
+    if (yf && !yf.includes('.')) {
+      yf = `${yf}.SA`;
+    }
+    fYF.value = yf;
+  }
+
+  if (fTicker) {
+    fTicker.addEventListener('input', function () {
+      this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    });
+    fTicker.addEventListener('blur', ensureYFFormat);
+  }
+
+  if (fYF) {
+    fYF.addEventListener('blur', function () {
+      fYF.value = fYF.value.toUpperCase().trim();
+      ensureYFFormat();
+    });
+  }
+})();
+</script>
+{% endblock %}
