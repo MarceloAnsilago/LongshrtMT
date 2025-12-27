@@ -16,6 +16,8 @@ load_dotenv()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+MT5_BRIDGE_URL = os.environ.get("MT5_BRIDGE_URL", "http://localhost:8000")
+
 
 def _env_bool(key: str, default: bool = False) -> bool:
     value = os.environ.get(key)

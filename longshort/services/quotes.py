@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta
-from typing import Iterable, Optional, Callable
+from typing import Iterable, Optional, Callable, Tuple, List
 
-import MetaTrader5 as mt5
 from django.db.models import Max
 from django.utils import timezone
 
 from acoes.models import Asset
 from cotacoes.models import QuoteDaily, MissingQuoteLog, QuoteLive
-from longshort.services.mt5_session import ensure_mt5_initialized
+from mt5api.mt5client import (
+    MT5BridgeError,
+    fetch_rates,
+    fetch_rates_range,
+    get_latest_price as bridge_latest_price,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +22,9 @@ ProgressCB = Optional[Callable[[str, int, int, str, int], None]]
 
 DAILY_HISTORY_COUNT = 200
 DAILY_REFRESH_COUNT = 5
-INTRADAY_TIMEFRAME = mt5.TIMEFRAME_M5
+INTRADAY_TIMEFRAME = 5  # M5
 INTRADAY_BARS = 1
+DAILY_TIMEFRAME = 1440  # D1
 BULK_BATCH_SIZE = 1000
 
 
@@ -37,13 +42,6 @@ def _mt5_symbol_for_asset(asset) -> Optional[str]:
     if symbol:
         return symbol
     return _normalize_symbol(getattr(asset, "ticker_yf", None))
-
-
-def _format_mt5_error() -> str:
-    err = mt5.last_error()
-    if not err or err[0] == 0:
-        return "unknown"
-    return f"{err[1]} ({err[0]})"
 
 
 def _log_missing_quote(asset, reason: str, detail: str, *, date=None) -> None:
@@ -67,34 +65,33 @@ def _rate_date(rate) -> Optional[datetime.date]:
 
 def _safe_close(rate) -> Optional[float]:
     try:
-        return float(rate["close"])
+        return float(rate.get("close"))
     except Exception:
         return None
 
 
-def _fetch_mt5_rates(symbol: str, timeframe: int, count: int) -> list[dict]:
-    now = datetime.now()
-    raw = mt5.copy_rates_from(symbol, timeframe, now, count)
-    if raw is None:
-        return []
-    rates: list[dict] = []
-    for row in raw:
-        if hasattr(row, "_asdict"):
-            rates.append(dict(row._asdict()))
-            continue
-        try:
-            dtype = getattr(row, "dtype", None)
-            if dtype and hasattr(dtype, "names"):
-                rates.append({name: row[i] for i, name in enumerate(dtype.names)})
-                continue
-        except Exception:
-            pass
-        rates.append({str(i): value for i, value in enumerate(row)})
-    return sorted(rates, key=lambda rate: rate.get("time", 0))
+def _fetch_bridge_rates(symbol: str, timeframe: int, count: int) -> Tuple[List[dict], Optional[str]]:
+    try:
+        return fetch_rates(symbol, timeframe, count), None
+    except MT5BridgeError as exc:
+        detail = str(exc)
+        logger.warning("MT5 bridge failed to fetch rates for %s: %s", symbol, detail)
+        return [], detail
+
+
+def _fetch_bridge_rates_range(
+    symbol: str, timeframe: int, start: datetime, end: datetime
+) -> Tuple[List[dict], Optional[str]]:
+    try:
+        return fetch_rates_range(symbol, timeframe, start, end), None
+    except MT5BridgeError as exc:
+        detail = str(exc)
+        logger.warning("MT5 bridge failed to fetch range for %s: %s", symbol, detail)
+        return [], detail
 
 
 def _fetch_intraday_price(symbol: str, timeframe: int = INTRADAY_TIMEFRAME) -> Optional[float]:
-    rates = _fetch_mt5_rates(symbol, timeframe, INTRADAY_BARS)
+    rates, _ = _fetch_bridge_rates(symbol, timeframe, INTRADAY_BARS)
     if not rates:
         return None
     return _safe_close(rates[-1])
@@ -128,12 +125,6 @@ def bulk_update_quotes(
     if total_assets == 0:
         return 0, 0
 
-    if not ensure_mt5_initialized():
-        detail = _format_mt5_error()
-        for asset in assets:
-            _log_missing_quote(asset, "mt5_init_failed", detail)
-        return 0, 0
-
     inserted_assets = 0
     total_rows = 0
     bulk_objs: list[QuoteDaily] = []
@@ -164,19 +155,15 @@ def bulk_update_quotes(
                     progress_cb(ticker_label, idx, total_assets, "no_symbol", 0)
                 continue
 
-            if not mt5.symbol_select(symbol, True):
-                _log_missing_quote(asset, "symbol_not_available", f"MT5 did not load {symbol}")
-                logger.warning("Symbol select failed for %s (%s)", symbol, ticker_label)
-                if progress_cb:
-                    progress_cb(symbol, idx, total_assets, "symbol_missing", 0)
-                continue
-
             last_date = QuoteDaily.objects.filter(asset=asset).aggregate(Max("date"))["date__max"]
             try:
                 needed = DAILY_HISTORY_COUNT if last_date is None else DAILY_REFRESH_COUNT
-                rates = _fetch_mt5_rates(symbol, mt5.TIMEFRAME_D1, needed)
+                rates, detail = _fetch_bridge_rates(symbol, DAILY_TIMEFRAME, needed)
                 if not rates:
-                    raise RuntimeError("No D1 bars returned")
+                    _log_missing_quote(asset, "mt5_error", detail or "No D1 bars returned")
+                    if progress_cb:
+                        progress_cb(symbol, idx, total_assets, "error", 0)
+                    continue
 
                 rows_inserted = 0
                 for rate in rates:
@@ -236,34 +223,27 @@ def update_live_quotes(assets: Iterable, progress_cb: ProgressCB = None) -> tupl
     if progress_cb:
         progress_cb("start", 0, total, "starting_live", 0)
 
-    if not ensure_mt5_initialized():
-        logger.error("MT5 initialize failed: %s", _format_mt5_error())
-        return 0, total
+    for idx, asset in enumerate(assets, start=1):
+        ticker_label = getattr(asset, "ticker", "")
+        if progress_cb:
+            progress_cb(ticker_label, idx, total, "processing_live", updated)
 
-    try:
-        for idx, asset in enumerate(assets, start=1):
-            ticker_label = getattr(asset, "ticker", "")
+        symbol = _mt5_symbol_for_asset(asset)
+        if not symbol:
             if progress_cb:
-                progress_cb(ticker_label, idx, total, "processing_live", updated)
+                progress_cb(ticker_label, idx, total, "symbol_missing", 0)
+            continue
 
-            symbol = _mt5_symbol_for_asset(asset)
-            if not symbol or not mt5.symbol_select(symbol, True):
-                if progress_cb:
-                    progress_cb(symbol or ticker_label, idx, total, "symbol_missing", 0)
-                continue
-
-            price = _fetch_intraday_price(symbol)
-            if price is None:
-                if progress_cb:
-                    progress_cb(symbol, idx, total, "no_data", 0)
-                continue
-
-            QuoteLive.objects.update_or_create(asset=asset, defaults={"price": price})
-            updated += 1
+        price = _fetch_intraday_price(symbol)
+        if price is None:
             if progress_cb:
-                progress_cb(symbol, idx, total, "ok", updated)
-    finally:
-        mt5.shutdown()
+                progress_cb(symbol, idx, total, "no_data", 0)
+            continue
+
+        QuoteLive.objects.update_or_create(asset=asset, defaults={"price": price})
+        updated += 1
+        if progress_cb:
+            progress_cb(symbol, idx, total, "ok", updated)
 
     if progress_cb:
         progress_cb("done", total, total, "done_live", updated)
@@ -275,21 +255,50 @@ def fetch_latest_price(ticker: str) -> Optional[float]:
     if not symbol:
         return None
 
-    if not ensure_mt5_initialized():
-        logger.error("MT5 initialize failed: %s", _format_mt5_error())
+    try:
+        return bridge_latest_price(symbol)
+    except MT5BridgeError as exc:
+        logger.error("MT5 bridge latest price failed for %s: %s", symbol, exc)
         return None
 
-    if not mt5.symbol_select(symbol, True):
-        return None
-    return _fetch_intraday_price(symbol)
+
+def _try_fetch_single_date_internal(asset, symbol: str, quote_date: date) -> bool:
+    start = datetime(quote_date.year, quote_date.month, quote_date.day)
+    end = start + timedelta(days=1)
+    rates, detail = _fetch_bridge_rates_range(symbol, DAILY_TIMEFRAME, start, end)
+    if not rates:
+        logger.warning("MT5 bridge range fetch returned empty for %s: %s", symbol, detail)
+        return False
+    close_value = _safe_close(rates[-1])
+    if close_value is None:
+        return False
+    QuoteDaily.objects.update_or_create(
+        asset=asset,
+        date=quote_date,
+        defaults={"close": close_value, "is_provisional": False},
+    )
+    return True
 
 
-def _fetch_mt5_rates_range(symbol: str, timeframe: int, start_dt: datetime, end_dt: datetime) -> list[dict]:
-    raw = mt5.copy_rates_range(symbol, timeframe, start_dt, end_dt)
-    if raw is None:
-        return []
-    rates = [dict(row._asdict()) if hasattr(row, "_asdict") else dict(row) for row in raw]
-    return sorted(rates, key=lambda rate: rate.get("time", 0))
+def try_fetch_single_date(asset, quote_date: date, *, use_stooq: bool = False) -> bool:
+    symbol = _mt5_symbol_for_asset(asset)
+    if not symbol:
+        return False
+    try:
+        return _try_fetch_single_date_internal(asset, symbol, quote_date)
+    except MT5BridgeError:
+        return False
+
+
+def find_missing_dates_for_asset(asset, *, since_months: int | None = 18) -> list[date]:
+    today = timezone.localdate()
+    if since_months:
+        lookback_start = today - timedelta(days=since_months * 30)
+    else:
+        lookback_start = today - timedelta(days=365)
+    results = QuoteDaily.objects.filter(asset=asset, date__range=(lookback_start, today)).values_list("date", flat=True)
+    existing = set(results)
+    return [day for day in _business_days(lookback_start, today) if day not in existing]
 
 
 def _business_days(start: date, end: date) -> list[date]:
@@ -308,53 +317,8 @@ def _date_to_unix(value: date) -> int:
     return int(datetime(value.year, value.month, value.day).timestamp())
 
 
-def _try_fetch_single_date_internal(asset, symbol: str, quote_date: date) -> bool:
-    if not mt5.symbol_select(symbol, True):
-        return False
-    start = datetime(quote_date.year, quote_date.month, quote_date.day)
-    end = start + timedelta(days=1)
-    rates = _fetch_mt5_rates_range(symbol, mt5.TIMEFRAME_D1, start, end)
-    if not rates:
-        return False
-    close_value = _safe_close(rates[-1])
-    if close_value is None:
-        return False
-    QuoteDaily.objects.update_or_create(
-        asset=asset,
-        date=quote_date,
-        defaults={"close": close_value, "is_provisional": False},
-    )
-    return True
-
-
-def try_fetch_single_date(asset, quote_date: date, *, use_stooq: bool = False) -> bool:
-    symbol = _mt5_symbol_for_asset(asset)
-    if not symbol:
-        return False
-    if not ensure_mt5_initialized():
-        logger.error("MT5 initialize failed: %s", _format_mt5_error())
-        return False
-    try:
-        return _try_fetch_single_date_internal(asset, symbol, quote_date)
-    finally:
-        mt5.shutdown()
-
-
-def find_missing_dates_for_asset(asset, *, since_months: int | None = 18) -> list[date]:
-    today = timezone.localdate()
-    if since_months:
-        lookback_start = today - timedelta(days=since_months * 30)
-    else:
-        lookback_start = today - timedelta(days=365)
-    results = QuoteDaily.objects.filter(asset=asset, date__range=(lookback_start, today)).values_list("date", flat=True)
-    existing = set(results)
-    return [day for day in _business_days(lookback_start, today) if day not in existing]
-
-
 def scan_all_assets_and_fix(*, use_stooq: bool = False, since_months: int | None = 18) -> list[dict]:
     assets = Asset.objects.filter(is_active=True).order_by("ticker")
-    initialized = ensure_mt5_initialized()
-    detail = _format_mt5_error() if not initialized else ""
     results: list[dict] = []
     for asset in assets:
         missing = find_missing_dates_for_asset(asset, since_months=since_months)
@@ -365,15 +329,11 @@ def scan_all_assets_and_fix(*, use_stooq: bool = False, since_months: int | None
         if not symbol:
             remaining = [day.isoformat() for day in missing]
         elif missing:
-            if not initialized:
-                remaining = [day.isoformat() for day in missing]
-                _log_missing_quote(asset, "mt5_init_failed", detail or "MT5 not available")
-            else:
-                for day in missing:
-                    if _try_fetch_single_date_internal(asset, symbol, day):
-                        fixed += 1
-                    else:
-                        remaining.append(day.isoformat())
+            for day in missing:
+                if _try_fetch_single_date_internal(asset, symbol, day):
+                    fixed += 1
+                else:
+                    remaining.append(day.isoformat())
         results.append(
             {
                 "ticker": asset.ticker,
