@@ -196,7 +196,8 @@ def bulk_update_quotes(
                         _flush_bulk()
 
                 today = timezone.localdate()
-                if not QuoteDaily.objects.filter(asset=asset, date=today).exists():
+                # Avoid creating daily quotes on weekends when there is no trading session.
+                if today.weekday() < 5 and not QuoteDaily.objects.filter(asset=asset, date=today).exists():
                     intraday = _fetch_intraday_price(symbol)
                     if intraday is not None:
                         created = _upsert_intraday_quote(asset, today, intraday)

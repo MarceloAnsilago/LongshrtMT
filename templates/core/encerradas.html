@@ -7,6 +7,30 @@
     <p class="text-body-secondary small mb-0">
       Painel com métricas de fechamento para acompanhar a performance do histórico.
     </p>
+    <form method="get" class="row g-2 align-items-end mt-2">
+      <div class="col-sm">
+        <label class="form-label text-body-secondary small text-uppercase mb-1">Filtrar período</label>
+        <select name="period" class="form-select form-select-sm" onchange="this.form.submit()">
+          {% for option in period_simple_options %}
+            <option value="{{ option.value }}" {% if selected_period == option.value %}selected{% endif %}>
+              {{ option.label }}
+            </option>
+          {% endfor %}
+          {% if period_month_options %}
+            <optgroup label="Meses">
+              {% for month in period_month_options %}
+                <option value="{{ month.value }}" {% if selected_period == month.value %}selected{% endif %}>
+                  {{ month.label }}
+                </option>
+              {% endfor %}
+            </optgroup>
+          {% endif %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary btn-sm mb-1">Aplicar</button>
+      </div>
+    </form>
   </div>
 
   <div class="row g-3">

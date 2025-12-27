@@ -1,8 +1,12 @@
 ﻿from __future__ import annotations
 
+import calendar
+from datetime import date
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
+
+from dateutil.relativedelta import relativedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -27,6 +31,23 @@ from pairs.constants import DEFAULT_BASE_WINDOW, DEFAULT_WINDOWS
 from pairs.forms import UserMetricsConfigForm
 from pairs.models import Pair, UserMetricsConfig
 from operacoes.models import Operation, OperationMetricSnapshot
+
+
+MONTH_NAMES_PT = (
+    "",
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+)
 
 
 def _build_home_operations_payload(request):
@@ -629,13 +650,61 @@ def _decimal_from_value(value) -> Decimal | None:
 
 @login_required
 def encerradas(request):
+    today_date = timezone.localdate()
+    selected_period = request.GET.get("period") or "all"
+    period_simple_options = [
+        {"value": "all", "label": "Todos os períodos"},
+        {"value": "last_12_months", "label": "Últimos 12 meses"},
+    ]
+    period_month_options: list[dict[str, str]] = []
+    first_of_month = today_date.replace(day=1)
+    for offset in range(12):
+        candidate = first_of_month - relativedelta(months=offset)
+        period_month_options.append(
+            {
+                "value": f"{candidate.year}-{candidate.month:02d}",
+                "label": f"{MONTH_NAMES_PT[candidate.month]} {candidate.year}",
+            }
+        )
+
+    def _resolve_period_bounds(key: str | None) -> tuple[date | None, date | None]:
+        if not key or key == "all":
+            return None, None
+        if key == "last_12_months":
+            start = (today_date.replace(day=1) - relativedelta(months=11))
+            return start, today_date
+        try:
+            year_str, month_str = key.split("-")
+            year = int(year_str)
+            month = int(month_str)
+            last_day = calendar.monthrange(year, month)[1]
+            return date(year, month, 1), date(year, month, last_day)
+        except (ValueError, calendar.IllegalMonthError):
+            return None, None
+
+    period_start, period_end = _resolve_period_bounds(selected_period)
+    if period_start is None and period_end is None and selected_period not in {"all"}:
+        selected_period = "all"
+        period_start = period_end = None
+
+    def _is_within_period(closing_date: date | None) -> bool:
+        if not (period_start or period_end):
+            return True
+        if closing_date is None:
+            return False
+        if period_start and closing_date < period_start:
+            return False
+        if period_end and closing_date > period_end:
+            return False
+        return True
+
     closed_qs = (
         Operation.objects.select_related("sell_asset", "buy_asset")
         .filter(user=request.user, status=Operation.STATUS_CLOSED)
         .order_by("-updated_at")
     )
-    total_closed = closed_qs.count()
     closing_price_cache: dict[tuple[int, object], Decimal | None] = {}
+    total_closed = 0
 
     def _fetch_price(asset_id: int | None, target_date):
         if not asset_id or not target_date:
@@ -666,6 +735,7 @@ def encerradas(request):
     MAX_GRID = 12
     closing_records: list[tuple[object, Decimal | None]] = []
     MAX_RECENT = 6
+    available_months: set[tuple[int, int]] = set()
 
     for operation in closed_qs:
         closing_dt = operation.updated_at or operation.opened_at
@@ -689,6 +759,11 @@ def encerradas(request):
         days_total += days_open
         days_count += 1
         closing_date = closing_local.date() if hasattr(closing_local, "date") else None
+        if closing_date:
+            available_months.add((closing_date.year, closing_date.month))
+        if not _is_within_period(closing_date):
+            continue
+        total_closed += 1
         if closing_date:
             days_by_date[closing_date].append(days_open)
         sell_close_price = _fetch_price(operation.sell_asset_id, closing_date)
@@ -736,6 +811,18 @@ def encerradas(request):
                     "has_result": pl_value is not None,
                 }
             )
+
+    filtered_months: list[dict[str, str]] = []
+    for month in period_month_options:
+        try:
+            year_str, month_str = month["value"].split("-")
+            year = int(year_str)
+            month_num = int(month_str)
+        except (ValueError, KeyError):
+            continue
+        if (year, month_num) in available_months:
+            filtered_months.append(month)
+    period_month_options = filtered_months
 
     hit_rate_label = "--"
     hit_rate_detail = "Ainda não há fechamentos com resultado calculado."
@@ -819,14 +906,17 @@ def encerradas(request):
             "net_total_label": _format_money(net_total),
             "profit_loss_ratio_label": ratio_label,
             "recent_operations": recent_operations,
-        "chart_pnl_series": pnl_series,
-        "chart_days_open_series": days_series,
-        "chart_profit_loss": profit_loss_series,
-        "chart_streak_series": streak_series,
-        "operation_grid": grid_operations,
-        "has_operations": total_closed > 0,
-    },
-)
+            "chart_pnl_series": pnl_series,
+            "chart_days_open_series": days_series,
+            "chart_profit_loss": profit_loss_series,
+            "chart_streak_series": streak_series,
+            "operation_grid": grid_operations,
+            "period_simple_options": period_simple_options,
+            "period_month_options": period_month_options,
+            "selected_period": selected_period,
+            "has_operations": total_closed > 0,
+        },
+    )
 
 
 def _format_detail_updated(dt_value) -> str:
