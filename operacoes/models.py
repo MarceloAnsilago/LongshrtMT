@@ -153,6 +153,41 @@ class Operation(models.Model):
             self.save(update_fields=["entry_zscore", "updated_at"])
 
 
+class OperationMT5Trade(models.Model):
+    LEG_CHOICES = (
+        ("A", "Perna A"),
+        ("B", "Perna B"),
+    )
+    SIDE_CHOICES = (
+        ("BUY", "Compra"),
+        ("SELL", "Venda"),
+    )
+
+    operation = models.ForeignKey(
+        Operation,
+        related_name="mt5_trades",
+        on_delete=models.CASCADE,
+    )
+    leg = models.CharField(max_length=1, choices=LEG_CHOICES)
+    symbol = models.CharField(max_length=32)
+    ticket = models.BigIntegerField()
+    side = models.CharField(max_length=4, choices=SIDE_CHOICES)
+    volume = models.FloatField()
+    price_open = models.FloatField()
+    sl = models.FloatField(null=True, blank=True)
+    tp = models.FloatField(null=True, blank=True)
+    comment = models.CharField(max_length=64, blank=True, default="")
+    opened_at = models.DateTimeField(default=timezone.now)
+    raw_response = models.JSONField(null=True, blank=True)
+    status = models.CharField(max_length=32, blank=True, default="")
+
+    class Meta:
+        unique_together = ("operation", "leg")
+
+    def __str__(self) -> str:
+        return f"{self.operation_id} {self.leg} | {self.symbol} #{self.ticket}"
+
+
 class OperationMetricSnapshot(models.Model):
     """
     Snapshot de metricas (z-score, beta, etc.) associado a uma operacao.

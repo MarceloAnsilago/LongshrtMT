@@ -35,7 +35,7 @@ from pairs.constants import DEFAULT_BASE_WINDOW, DEFAULT_WINDOWS
 from pairs.forms import UserMetricsConfigForm
 from pairs.models import Pair, UserMetricsConfig
 from operacoes.forms import OperationForm
-from operacoes.models import Operation, OperationMetricSnapshot
+from operacoes.models import Operation, OperationMetricSnapshot, OperationMT5Trade
 from operacoes.services.mt5_trade import MT5TradeExecutionError, execute_pair_trade
 
 logger = logging.getLogger(__name__)
@@ -199,9 +199,27 @@ def _build_home_operations_payload(request):
                 to_attr="current_snapshots",
             ),
         )
+        .prefetch_related("mt5_trades")
         .filter(user=request.user, status=Operation.STATUS_OPEN)
         .order_by("-opened_at")
     )
+
+    def _serialize_mt5_trade(trade: OperationMT5Trade | None) -> dict | None:
+        if not trade:
+            return None
+        return {
+            "leg": trade.leg,
+            "symbol": trade.symbol,
+            "ticket": trade.ticket,
+            "side": trade.side,
+            "volume": trade.volume,
+            "price_open": trade.price_open,
+            "sl": trade.sl,
+            "tp": trade.tp,
+            "status": trade.status,
+            "comment": trade.comment,
+            "opened_at": trade.opened_at,
+        }
 
     for operation in operations_qs:
         entry_snapshot = (operation.entry_snapshots[0] if getattr(operation, "entry_snapshots", None) else None)
@@ -418,6 +436,13 @@ def _build_home_operations_payload(request):
                     "retorno_total_label": _format_pct(pnl_stats.get("retorno_total_%")),
                 }
 
+        trades_qs = getattr(operation, "mt5_trades", None)
+        trades_by_leg = {trade.leg: trade for trade in (trades_qs.all() if trades_qs is not None else [])}
+        mt5_info = {
+            "A": _serialize_mt5_trade(trades_by_leg.get("A")),
+            "B": _serialize_mt5_trade(trades_by_leg.get("B")),
+        }
+
         operations_cards.append(
             {
                 "operation": operation,
@@ -444,6 +469,7 @@ def _build_home_operations_payload(request):
                 "pnl_summary": pnl_summary,
                 "pl_total": pl_total,
                 "current_zscore": current_zscore,
+                "mt5": mt5_info,
             }
         )
 

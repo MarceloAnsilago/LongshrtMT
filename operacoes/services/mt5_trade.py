@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+
 from django.conf import settings
+from django.utils import timezone
 
 from acoes.models import Asset
 from mt5_bridge_client.mt5client import MT5BridgeError, execute_trades
-from operacoes.models import Operation
+from operacoes.models import Operation, OperationMT5Trade
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,51 @@ def _build_comment(operation: Operation, role: str) -> str:
     if user_id:
         comment = f"{comment} u{user_id}"
     return comment[:31]  # MT5 comment max 31 chars
+
+
+def _safe_float(value: object) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _persist_mt5_trade(operation: Operation, leg: str, payload: dict[str, object], response: dict[str, object]) -> None:
+    symbol = payload.get("symbol", "")
+    volume = _safe_float(response.get("volume")) or _safe_float(payload.get("lots")) or 0.0
+    price_open = _safe_float(response.get("price")) or _safe_float(payload.get("price")) or 0.0
+    status = response.get("status") or ""
+    sl = _safe_float(response.get("sl"))
+    tp = _safe_float(response.get("tp"))
+    comment = response.get("comment") or payload.get("comment") or ""
+    opened_at_val = response.get("opened_at")
+    if isinstance(opened_at_val, str):
+        try:
+            opened_at = timezone.make_aware(datetime.fromisoformat(opened_at_val))
+        except Exception:
+            opened_at = timezone.now()
+    else:
+        opened_at = opened_at_val or timezone.now()
+
+    OperationMT5Trade.objects.update_or_create(
+        operation=operation,
+        leg=leg,
+        defaults={
+            "symbol": symbol,
+            "ticket": int(response.get("ticket") or 0),
+            "side": (payload.get("side") or "").upper(),
+            "volume": volume,
+            "price_open": price_open,
+            "sl": sl,
+            "tp": tp,
+            "comment": comment,
+            "opened_at": opened_at,
+            "raw_response": response,
+            "status": status,
+        },
+    )
 
 
 def _build_trade_payload(operation: Operation, role: str) -> dict[str, object]:
@@ -91,6 +139,17 @@ def execute_pair_trade(operation: Operation) -> list[dict[str, object]]:
         ])
         result = execute_trades(trades)
         logger.info("MT5: resposta do bridge para operação %s: %s", operation.pk, result)
+
+        leg_payloads = [
+            ("A", sell_payload),
+            ("B", buy_payload),
+        ]
+        for idx, (leg, payload) in enumerate(leg_payloads):
+            response = result[idx] if isinstance(result, list) and idx < len(result) else {}
+            if not isinstance(response, dict):
+                response = {}
+            _persist_mt5_trade(operation, leg, payload, response)
+
         return result
     except MT5BridgeError as exc:
         logger.error("Falha na execução das ordens MT5 para a operação %s: %s", operation.pk, exc)

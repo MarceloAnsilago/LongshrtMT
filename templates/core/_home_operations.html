@@ -379,6 +379,53 @@
 
                 </div>
 
+                <div class="border rounded-3 px-3 py-2 small bg-body-tertiary">
+                  <div class="text-uppercase small text-body-secondary fw-semibold mb-2">Ordens MT5</div>
+                  {% if item.mt5.A or item.mt5.B %}
+                    {% if item.mt5.A %}
+                      <div class="d-flex flex-column gap-1 small">
+                        <div>
+                          <strong>A:</strong>
+                          {{ item.mt5.A.symbol }}
+                          | Ticket #{{ item.mt5.A.ticket }}
+                          | {{ item.mt5.A.side }}
+                          | {{ item.mt5.A.volume|floatformat:2 }}
+                          @ {{ item.mt5.A.price_open|floatformat:2 }}
+                        </div>
+                        {% if item.mt5.A.status %}
+                          <div class="text-body-tertiary">
+                            Status: {{ item.mt5.A.status }}
+                            {% if item.mt5.A.opened_at %}
+                              | Aberto em {{ item.mt5.A.opened_at|date:"d/m H:i" }}
+                            {% endif %}
+                          </div>
+                        {% endif %}
+                      </div>
+                    {% endif %}
+                    {% if item.mt5.B %}
+                      <div class="d-flex flex-column gap-1 small">
+                        <div>
+                          <strong>B:</strong>
+                          {{ item.mt5.B.symbol }}
+                          | Ticket #{{ item.mt5.B.ticket }}
+                          | {{ item.mt5.B.side }}
+                          | {{ item.mt5.B.volume|floatformat:2 }}
+                          @ {{ item.mt5.B.price_open|floatformat:2 }}
+                        </div>
+                        {% if item.mt5.B.status %}
+                          <div class="text-body-tertiary">
+                            Status: {{ item.mt5.B.status }}
+                            {% if item.mt5.B.opened_at %}
+                              | Aberto em {{ item.mt5.B.opened_at|date:"d/m H:i" }}
+                            {% endif %}
+                          </div>
+                        {% endif %}
+                      </div>
+                    {% endif %}
+                  {% else %}
+                    <div class="text-muted small">MT5: nenhuma ordem vinculada</div>
+                  {% endif %}
+                </div>
 
 
                 <!-- Resumo financeiro -->
