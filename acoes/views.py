@@ -26,6 +26,10 @@ class AssetListView(LoginRequiredMixin, ListView):
             qs = qs.filter(favorites__user=self.request.user)
         fav_qs = UserAsset.objects.filter(user=self.request.user, asset=OuterRef('pk'))
         return qs.annotate(is_fav=Exists(fav_qs))
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["total_assets"] = Asset.objects.count()
+        return ctx
 
 class AssetCreateView(CreateView):
     model = Asset

@@ -6,7 +6,25 @@ from typing import Any, Dict, List, Optional
 
 import MetaTrader5 as mt5
 
+try:
+    import numpy as np
+except ImportError:  # MetaTrader5 usually bundles numpy
+    np = None
+
 logger = logging.getLogger(__name__)
+
+
+def _to_native(value: Any) -> Any:
+    """
+    Converte tipos numpy para tipos nativos do Python (int/float) para evitar
+    problemas de serialização no FastAPI.
+    """
+    if np is not None:
+        if isinstance(value, np.integer):
+            return int(value)
+        if isinstance(value, np.floating):
+            return float(value)
+    return value
 
 
 def _ensure_symbol(symbol: str) -> bool:
@@ -29,13 +47,32 @@ def _format_mt5_error() -> str:
     return f"{err[1]} ({err[0]})"
 
 
+def get_mt5_last_error() -> str:
+    """Retorna a última mensagem de erro do MT5 (útil para depuração)."""
+    err = mt5.last_error()
+    if not err:
+        return "sem erro registrado"
+    code, message = err[0], err[1]
+    if code == 0:
+        return "sem erro registrado"
+    return f"{message} ({code})"
+
+
 def _row_to_dict(row: Any) -> Dict[str, Any]:
     if hasattr(row, "_asdict"):
-        return dict(row._asdict())
+        return {k: _to_native(v) for k, v in row._asdict().items()}
+
     dtype = getattr(row, "dtype", None)
     if dtype and hasattr(dtype, "names"):
-        return {name: row[i] for i, name in enumerate(dtype.names)}
-    return {str(i): value for i, value in enumerate(row)}
+        return {
+            name: _to_native(row[i])
+            for i, name in enumerate(dtype.names)
+        }
+
+    return {
+        str(i): _to_native(value)
+        for i, value in enumerate(row)
+    }
 
 
 def _normalize_rates(raw: List[Any]) -> List[Dict[str, Any]]:
@@ -65,16 +102,17 @@ def get_latest_price(symbol: str) -> float | None:
 
 def fetch_rates(symbol: str, timeframe: int, count: int) -> List[Dict[str, Any]]:
     """
-    Retorna barras geradas por `mt5.copy_rates_from`.
+    Retorna até `count` barras mais recentes usando `mt5.copy_rates_from_pos`.
     """
     if not _ensure_symbol(symbol):
         raise RuntimeError(f"Símbolo {symbol} indisponível no MT5")
 
-    now = datetime.now()
-    raw = mt5.copy_rates_from(symbol, timeframe, now, count)
+    logger.info("fetch_rates: symbol=%s timeframe=%s count=%s", symbol, timeframe, count)
+
+    raw = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
     if raw is None:
         error_detail = _format_mt5_error()
-        logger.error("MT5.copy_rates_from falhou: %s", error_detail)
+        logger.error("MT5.copy_rates_from_pos falhou: %s", error_detail)
         raise RuntimeError(error_detail)
     return _normalize_rates(list(raw))
 

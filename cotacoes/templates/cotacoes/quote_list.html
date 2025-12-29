@@ -20,8 +20,52 @@
         <a class="btn btn-outline-info" href="{% url 'cotacoes:pivot' %}">
           <i class="bi bi-layout-three-columns"></i> Tabela dinâmica (tela cheia)
         </a>
+  </div>
+</div>
+
+  {% if bridge_quotes %}
+    <div class="card rounded-3 shadow-sm mb-3">
+      <div class="card-body">
+        <h6 class="card-title mb-3">Último fechamento D1 (MT5 Bridge)</h6>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Código</th>
+                <th>Nome</th>
+                <th>Fechamento D1</th>
+                {% if bridge_has_errors %}
+                  <th>Erro</th>
+                {% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in bridge_quotes %}
+                <tr>
+                  <td>{{ item.asset.ticker }}</td>
+                  <td>{{ item.asset.name }}</td>
+                  <td>
+                    {% if item.preco_d1 %}
+                      {{ item.preco_d1 }}
+                    {% else %}
+                      &mdash;
+                    {% endif %}
+                  </td>
+                  {% if bridge_has_errors %}
+                    <td>
+                      {% if item.erro %}
+                        <small>{{ item.erro }}</small>
+                      {% endif %}
+                    </td>
+                  {% endif %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
+  {% endif %}
   </div>
 
   <div class="card rounded-3 shadow-sm mb-3">
@@ -93,6 +137,22 @@
         <div class="card-header bg-transparent"><strong>Logs de faltantes</strong></div>
         <div class="card-body">
           <ul class="list-group list-group-flush">
+            {% for bridge_error in bridge_error_entries %}
+              <li class="list-group-item">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div>
+                    <span class="badge text-bg-danger">MT5 Bridge</span>
+                    <strong class="ms-1">{{ bridge_error.asset.ticker }}</strong>
+                    <small class="text-muted d-block">{{ bridge_error.asset.name }}</small>
+                    <span class="small d-block mt-1 text-danger">
+                      {{ bridge_error.erro }}
+                    </span>
+                  </div>
+                  <span class="badge text-bg-warning">erro</span>
+                </div>
+              </li>
+            {% endfor %}
+
             {% for log in logs %}
               <li class="list-group-item">
                 <div class="d-flex justify-content-between align-items-start">
@@ -103,7 +163,7 @@
                     </a>
                     <small class="text-muted">{{ log.created_at|date:"d/m/Y H:i" }}</small><br>
                     <span class="small d-block mt-1">
-                      {{ log.reason }} — {{ log.detail|truncatechars:80 }}
+                      {{ log.reason }} – {{ log.detail|truncatechars:80 }}
                     </span>
                   </div>
 

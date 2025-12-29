@@ -2,8 +2,9 @@
 & .\venv\Scripts\Activate.ps1 
 python manage.py runserver
 
+python manage.py shell
 
-uvicorn mt5_bridge.api:app --reload --host 127.0.0.1 --port 8001
+uvicorn mt5_bridge.api:app --reload --host 127.0.0.1 --port 8001 
 
 python manage.py runserver 127.0.0.1:8000
 

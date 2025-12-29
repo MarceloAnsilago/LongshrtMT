@@ -8,6 +8,9 @@ from types import SimpleNamespace
 
 from dateutil.relativedelta import relativedelta
 
+import logging
+
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Prefetch, Q
@@ -31,7 +34,11 @@ from mt5api.mt5client import get_latest_price
 from pairs.constants import DEFAULT_BASE_WINDOW, DEFAULT_WINDOWS
 from pairs.forms import UserMetricsConfigForm
 from pairs.models import Pair, UserMetricsConfig
+from operacoes.forms import OperationForm
 from operacoes.models import Operation, OperationMetricSnapshot
+from operacoes.services.mt5_trade import MT5TradeExecutionError, execute_pair_trade
+
+logger = logging.getLogger(__name__)
 
 
 MONTH_NAMES_PT = (
@@ -1366,7 +1373,8 @@ def operacoes(request):
         source_value = (posted.get("source") or "").strip().lower()
         if source_value not in {"analysis", "manual"}:
             source_value = "analysis"
-        is_real = bool(posted.get("is_real"))
+
+        form = OperationForm(posted)
 
         if errors:
             return respond_with_errors()
@@ -1470,31 +1478,55 @@ def operacoes(request):
             if sell_ticker == right_ticker and buy_ticker == left_ticker:
                 orientation = "inverted"
 
-        operation = Operation.objects.create(
-            user=request.user,
-            pair=pair_obj,
-            left_asset=left_asset,
-            right_asset=right_asset,
-            sell_asset=sell_asset,
-            buy_asset=buy_asset,
-            window=window_value,
-            orientation=orientation,
-            source=source_value,
-            sell_quantity=sell_qty,
-            buy_quantity=buy_qty,
-            lot_size=lot_size,
-            lot_multiplier=lot_multiplier,
-            sell_price=sell_price,
-            buy_price=buy_price,
-            sell_value=sell_value,
-            buy_value=buy_value,
-            net_value=net_value,
-            capital_allocated=capital_allocated,
-            entry_zscore=entry_zscore,
-            trade_plan=trade_plan_payload,
-            pair_metrics=metrics_payload if isinstance(metrics_payload, dict) else None,
-            is_real=is_real,
-        )
+        if form.is_valid():
+            operation = form.save(commit=False)
+        else:
+            operation = form.instance
+            if form.errors:
+                logger.warning("OperationForm inválido ao gravar is_real: %s", form.errors)
+            operation.is_real = False
+
+        operation.user = request.user
+        operation.pair = pair_obj
+        operation.left_asset = left_asset
+        operation.right_asset = right_asset
+        operation.sell_asset = sell_asset
+        operation.buy_asset = buy_asset
+        operation.window = window_value
+        operation.orientation = orientation
+        operation.source = source_value
+        operation.sell_quantity = sell_qty
+        operation.buy_quantity = buy_qty
+        operation.lot_size = lot_size
+        operation.lot_multiplier = lot_multiplier
+        operation.sell_price = sell_price
+        operation.buy_price = buy_price
+        operation.sell_value = sell_value
+        operation.buy_value = buy_value
+        operation.net_value = net_value
+        operation.capital_allocated = capital_allocated
+        operation.entry_zscore = entry_zscore
+        operation.trade_plan = trade_plan_payload
+        operation.pair_metrics = metrics_payload if isinstance(metrics_payload, dict) else None
+        operation.save()
+
+        if operation.is_real:
+            if getattr(settings, "MT5_DRY_RUN", False):
+                messages.warning(
+                    request,
+                    "MT5_DRY_RUN está ativado — operação NÃO enviada para o MT5.",
+                )
+                logger.info(
+                    "DRY_RUN ativo: operação %s marcada como real NÃO foi executada",
+                    operation.pk,
+                )
+            else:
+                try:
+                    execute_pair_trade(operation)
+                except MT5TradeExecutionError as exc:
+                    operation.delete()
+                    errors.append(f"Falha ao enviar a operação real para o MT5 Bridge: {exc}")
+                    return respond_with_errors()
 
         metrics_snapshot_payload = metrics_payload if isinstance(metrics_payload, dict) else None
         if metrics_snapshot_payload:
@@ -1812,6 +1844,7 @@ def operacoes(request):
         "summary": summary,
         "existing_operation_info": existing_operation_info,
         "valuation": valuation,
+        "form": OperationForm(),
     }
     return render(request, "core/operacoes.html", context)
 

@@ -72,6 +72,13 @@
       </div>
     </nav>
 
+    {% if MT5_DRY_RUN %}
+      <div class="alert alert-warning text-center rounded-0 mb-0 border-0" role="alert">
+        <strong>🛑 Simulação interna ativa (DRY_RUN=True):</strong> nenhuma ordem será enviada ao MetaTrader — nem para conta demo nem real.
+        Para ativar o envio de ordens ao MT5 conectado, defina <code>MT5_DRY_RUN=False</code> e reinicie o servidor.
+      </div>
+    {% endif %}
+
     <!-- Sidebar Offcanvas -->
     <div class="offcanvas offcanvas-start" tabindex="-1" id="appSidebar" aria-labelledby="appSidebarLabel">
       <div class="offcanvas-header border-bottom">

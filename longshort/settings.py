@@ -14,16 +14,21 @@ from dotenv import load_dotenv  # <--- NOVO
 load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-MT5_BRIDGE_URL = os.environ.get("MT5_BRIDGE_URL", "http://localhost:8000")
-
-
 def _env_bool(key: str, default: bool = False) -> bool:
     value = os.environ.get(key)
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+MT5_BRIDGE_URL = os.environ.get("MT5_BRIDGE_URL", "http://127.0.0.1:9000")
+try:
+    MT5_TRADE_MAGIC = int(os.environ.get("MT5_TRADE_MAGIC", "741853"))
+except (TypeError, ValueError):
+    MT5_TRADE_MAGIC = 741853
+MT5_TRADE_COMMENT = os.environ.get("MT5_TRADE_COMMENT", "LongShort")
+MT5_DRY_RUN = _env_bool("MT5_DRY_RUN", True)
 
 
 def _env_hosts(key: str, default: str) -> list[str]:
@@ -102,11 +107,12 @@ TEMPLATES = [
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
-                'django.template.context_processors.debug',
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
-            ],
+            'django.template.context_processors.debug',
+            'django.template.context_processors.request',
+            'django.contrib.auth.context_processors.auth',
+            'django.contrib.messages.context_processors.messages',
+            'core.context_processors.mt5_dry_run',
+        ],
         },
     },
 ]

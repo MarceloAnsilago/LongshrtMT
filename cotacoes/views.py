@@ -16,6 +16,7 @@ from django.views.decorators.http import require_http_methods, require_GET, requ
 from django.views.generic import ListView, TemplateView
 
 from acoes.models import Asset
+from mt5_bridge_client.mt5client import fetch_last_close_d1, MT5BridgeError
 from .models import QuoteDaily, MissingQuoteLog
 
 from longshort.services.quotes import (
@@ -92,6 +93,27 @@ class QuotesHomeView(LoginRequiredMixin, TemplateView):
         ctx["pivot_cols"] = pivot_ctx["cols"]
         ctx["pivot_rows"] = pivot_ctx["rows"]
         ctx["ticker_input"] = ",".join(tickers_filter or [])
+
+        bridge_error_entries = []
+        bridge_errors = 0
+        assets_for_bridge = Asset.objects.filter(is_active=True).order_by("ticker")[:12]
+        for asset in assets_for_bridge:
+            preco_d1 = None
+            erro = None
+            try:
+                preco_d1 = fetch_last_close_d1(asset.ticker)
+            except MT5BridgeError as exc:
+                erro = str(exc)
+                bridge_errors += 1
+                bridge_error_entries.append({"asset": asset, "erro": erro})
+
+        if bridge_errors:
+            messages.warning(
+                self.request,
+                "Algumas cotações D1 não puderam ser carregadas via MT5 Bridge. Confira os logs.",
+            )
+
+        ctx["bridge_error_entries"] = bridge_error_entries
         return ctx
 
 
