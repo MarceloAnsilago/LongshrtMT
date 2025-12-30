@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Union, Literal
 import logging
 import os
@@ -15,6 +15,19 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="MT5 Bridge", version="0.1.0")
 
+def _log_account_context() -> None:
+    info = mt5.account_info()
+    if not info:
+        logger.warning("MT5 account info unavailable at startup.")
+        return
+    margin_label = _MARGIN_MODE_LABELS.get(info.margin_mode, str(info.margin_mode))
+    logger.info(
+        "MT5 account login=%s server=%s margin_mode=%s",
+        getattr(info, "login", None),
+        getattr(info, "server", None),
+        margin_label,
+    )
+
 def _env_int(key: str, default: int) -> int:
     try:
         return int(os.environ.get(key, default))
@@ -25,6 +38,11 @@ TRADE_MAGIC = _env_int("MT5_TRADE_MAGIC", 741853)
 TRADE_DEFAULT_DEVIATION = _env_int("MT5_TRADE_DEVIATION", 20)
 TRADE_COMMENT = os.environ.get("MT5_TRADE_COMMENT", "LongShort")
 
+_MARGIN_MODE_LABELS: Dict[int, str] = {
+    mt5.ACCOUNT_MARGIN_MODE_RETAIL_HEDGING: "RETAIL_HEDGING",
+    mt5.ACCOUNT_MARGIN_MODE_RETAIL_NETTING: "RETAIL_NETTING",
+}
+
 
 # ------------------------------------------------------------
 # Eventos de ciclo de vida
@@ -33,6 +51,7 @@ TRADE_COMMENT = os.environ.get("MT5_TRADE_COMMENT", "LongShort")
 def startup_event():
     # inicializa conexão com o MT5 quando o servidor sobe
     init_mt5()
+    _log_account_context()
 
 
 # ------------------------------------------------------------
@@ -144,6 +163,7 @@ class TradeOrder(BaseModel):
     comment: Optional[str] = None
     type_time: TradeTimeLiteral = "GTC"
     type_filling: TradeFillingLiteral = "IOC"
+    request_id: Optional[str] = None
 
 
 class TradesRequest(BaseModel):
@@ -157,10 +177,112 @@ class TradeResult(BaseModel):
     price: float
     volume: float
     comment: Optional[str] = None
+    order: Optional[int] = None
+    deal: Optional[int] = None
+    position_id: Optional[int] = None
+    request_id: Optional[str] = None
+    account_login: Optional[int] = None
+    account_server: Optional[str] = None
 
 
 class TradesResponse(BaseModel):
     trades: List[TradeResult]
+
+
+class ExplainCloseDeal(BaseModel):
+    timestamp: datetime
+    symbol: Optional[str] = None
+    price: float
+    profit: float
+    volume: float
+    comment: Optional[str] = None
+    magic: Optional[int] = None
+    order: Optional[int] = None
+    deal: Optional[int] = None
+    position_id: Optional[int] = None
+    deal_type: Optional[int] = None
+    deal_reason: Optional[int] = None
+    deal_entry: Optional[int] = None
+    deal_position_id: Optional[int] = None
+    deal_comment: Optional[str] = None
+    deal_magic: Optional[int] = None
+
+
+class ExplainCloseRequest(BaseModel):
+    identifier: int
+    from_dt: datetime
+    to_dt: datetime
+
+
+class ExplainCloseResponse(BaseModel):
+    identifier: int
+    deal: ExplainCloseDeal
+
+
+def _deal_matches_identifier(deal: Any, identifier: int) -> bool:
+    entry = getattr(deal, "entry", None)
+    if entry != mt5.DEAL_ENTRY_OUT:
+        return False
+    return any(
+        getattr(deal, attr, None) == identifier
+        for attr in ("position_id", "order", "deal")
+    )
+
+
+def _deal_to_summary(deal: Any) -> ExplainCloseDeal:
+    timestamp = getattr(deal, "time", 0) or 0
+    moment = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
+    return ExplainCloseDeal(
+        timestamp=moment,
+        symbol=getattr(deal, "symbol", None),
+        price=float(getattr(deal, "price", 0.0) or 0.0),
+        profit=float(getattr(deal, "profit", 0.0) or 0.0),
+        volume=float(getattr(deal, "volume", 0.0) or 0.0),
+        comment=getattr(deal, "comment", None),
+        magic=_cast_int(getattr(deal, "magic", None)),
+        order=_cast_int(getattr(deal, "order", None)),
+        deal=_cast_int(getattr(deal, "deal", None)),
+        position_id=_cast_int(getattr(deal, "position_id", None)),
+        deal_type=_cast_int(getattr(deal, "type", None)),
+        deal_reason=_cast_int(getattr(deal, "reason", None)),
+        deal_entry=_cast_int(getattr(deal, "entry", None)),
+        deal_position_id=_cast_int(getattr(deal, "position_id", None)),
+        deal_comment=getattr(deal, "comment", None),
+        deal_magic=_cast_int(getattr(deal, "magic", None)),
+    )
+
+
+def _select_closing_deal(
+    identifier: int, start: datetime, end: datetime
+) -> ExplainCloseDeal:
+    try:
+        deals = mt5.history_deals_get(start, end)
+    except Exception as exc:
+        logger.error("MT5 history deals failed: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    if not deals:
+        raise HTTPException(
+            status_code=404,
+            detail="No deals returned for the requested interval.",
+        )
+
+    matches = [deal for deal in deals if _deal_matches_identifier(deal, identifier)]
+    if not matches:
+        raise HTTPException(
+            status_code=404,
+            detail="No closing deal found for the provided identifier.",
+        )
+
+    closing = max(matches, key=lambda deal: getattr(deal, "time", 0) or 0)
+    return _deal_to_summary(closing)
+
+
+@app.post("/api/history/explain_close", response_model=ExplainCloseResponse)
+def explain_close(payload: ExplainCloseRequest):
+    _validate_range(payload.from_dt, payload.to_dt)
+    summary = _select_closing_deal(payload.identifier, payload.from_dt, payload.to_dt)
+    return ExplainCloseResponse(identifier=payload.identifier, deal=summary)
 
 
 # ------------------------------------------------------------
@@ -305,13 +427,58 @@ def _order_type(order: TradeOrder) -> int:
     return mt5.ORDER_TYPE_BUY if order.side == "buy" else mt5.ORDER_TYPE_SELL
 
 
+def _cast_int(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _account_context() -> Dict[str, Any]:
+    info = mt5.account_info()
+    if not info:
+        return {"login": None, "server": None}
+    return {
+        "login": getattr(info, "login", None),
+        "server": getattr(info, "server", None),
+    }
+
+
+_DEAL_LOOKBACK = timedelta(minutes=2)
+
+
+def _resolve_position_id(result: Any) -> int | None:
+    position = _cast_int(getattr(result, "position", None))
+    if position:
+        return position
+    deal_id = _cast_int(getattr(result, "deal", None))
+    if not deal_id:
+        return None
+    end = datetime.now(timezone.utc)
+    start = end - _DEAL_LOOKBACK
+    try:
+        deals = mt5.history_deals_get(start, end)
+    except Exception as exc:
+        logger.warning("Unable to fetch history deals for position_id fallback: %s", exc)
+        return None
+    if not deals:
+        return None
+    for deal in deals:
+        if _cast_int(getattr(deal, "deal", None)) == deal_id:
+            return _cast_int(getattr(deal, "position_id", None))
+    return None
+
+
 def _execute_trade(order: TradeOrder) -> TradeResult:
     symbol = order.symbol.strip().upper()
     if not quotes_core._ensure_symbol(symbol):
-        raise HTTPException(status_code=400, detail=f"Símbolo {symbol} indisponível no MT5.")
+        raise HTTPException(status_code=400, detail=f"Symbol {symbol} unavailable in MT5.")
 
     volume = _resolve_volume(order)
     price = _resolve_price(order, symbol)
+    account_info = _account_context()
     trade_request: dict[str, object] = {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": symbol,
@@ -324,23 +491,30 @@ def _execute_trade(order: TradeOrder) -> TradeResult:
         "type_time": _TIME_MAP.get(order.type_time, mt5.ORDER_TIME_GTC),
         "type_filling": _FILLING_MAP.get(order.type_filling, mt5.ORDER_FILLING_IOC),
     }
+    if order.request_id:
+        trade_request["request_id"] = order.request_id
 
     result = mt5.order_send(trade_request)
     if result is None:
-        raise HTTPException(status_code=500, detail="MT5 não respondeu à ordem.")
+        raise HTTPException(status_code=500, detail="MT5 did not answer the order.")
     if result.retcode != mt5.TRADE_RETCODE_DONE:
         detail = result.comment or quotes_core._format_mt5_error()
         raise HTTPException(status_code=422, detail=detail)
 
     return TradeResult(
         symbol=symbol,
-        ticket=int(result.order),
+        ticket=_cast_int(result.order) or 0,
         retcode=int(result.retcode),
         price=float(result.price),
         volume=float(result.volume),
         comment=result.comment,
+        order=_cast_int(result.order),
+        deal=_cast_int(result.deal),
+        position_id=_resolve_position_id(result),
+        request_id=order.request_id,
+        account_login=account_info.get("login"),
+        account_server=account_info.get("server"),
     )
-
 
 @app.post("/api/trades", response_model=TradesResponse)
 def trades(payload: TradesRequest):

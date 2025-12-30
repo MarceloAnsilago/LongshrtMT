@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import uuid
 from typing import Any, Mapping, Sequence
 
 from django.conf import settings
@@ -186,6 +187,44 @@ class OperationMT5Trade(models.Model):
 
     def __str__(self) -> str:
         return f"{self.operation_id} {self.leg} | {self.symbol} #{self.ticket}"
+
+
+class MT5AuditEvent(models.Model):
+    ACTION_CHOICES = (
+        ("OPEN", "Abertura"),
+        ("CLOSE", "Encerramento"),
+        ("MODIFY", "Modificação"),
+    )
+
+    request_id = models.UUIDField(editable=False, unique=True, default=uuid.uuid4)
+    operation = models.ForeignKey(
+        Operation,
+        related_name="mt5_audit_events",
+        on_delete=models.CASCADE,
+    )
+    leg = models.CharField(max_length=16)
+    symbol = models.CharField(max_length=32)
+    volume = models.FloatField()
+    action = models.CharField(max_length=16, choices=ACTION_CHOICES)
+    reason = models.CharField(max_length=64)
+    request_payload = models.JSONField(null=True, blank=True)
+    response_payload = models.JSONField(null=True, blank=True)
+    retcode = models.IntegerField(null=True, blank=True)
+    order = models.BigIntegerField(null=True, blank=True)
+    deal = models.BigIntegerField(null=True, blank=True)
+    position_id = models.BigIntegerField(null=True, blank=True)
+    ticket = models.BigIntegerField(null=True, blank=True)
+    error_message = models.TextField(blank=True, default="")
+    account_login = models.CharField(max_length=32, blank=True, default="")
+    account_server = models.CharField(max_length=128, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.operation_id} {self.leg} {self.action} {self.request_id}"
 
 
 class OperationMetricSnapshot(models.Model):

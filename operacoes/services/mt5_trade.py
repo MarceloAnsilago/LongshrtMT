@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import uuid
 from datetime import datetime
 
 from django.conf import settings
@@ -8,13 +10,19 @@ from django.utils import timezone
 
 from acoes.models import Asset
 from mt5_bridge_client.mt5client import MT5BridgeError, execute_trades
-from operacoes.models import Operation, OperationMT5Trade
+from operacoes.models import MT5AuditEvent, Operation, OperationMT5Trade
+from operacoes.services.mt5_audit import (
+    create_mt5_audit_event,
+    update_mt5_audit_event,
+)
 
 logger = logging.getLogger(__name__)
 
+MT5_OPEN_REASON = "strategy_entry"
+
 
 class MT5TradeExecutionError(MT5BridgeError):
-    """Erro ao tentar executar uma operacao diretamente no MT5."""
+    """Error while executing an MT5 operation."""
 
 
 def _normalize_symbol(asset: Asset | None) -> str | None:
@@ -34,7 +42,7 @@ def _build_comment(operation: Operation, role: str) -> str:
     user_id = getattr(operation.user, "id", None)
     if user_id:
         comment = f"{comment} u{user_id}"
-    return comment[:31]  # MT5 comment max 31 chars
+    return comment[:31]
 
 
 def _safe_float(value: object) -> float | None:
@@ -84,18 +92,18 @@ def _persist_mt5_trade(operation: Operation, leg: str, payload: dict[str, object
 
 def _build_trade_payload(operation: Operation, role: str) -> dict[str, object]:
     if role not in {"sell", "buy"}:
-        raise ValueError("role deve ser 'sell' ou 'buy'")
+        raise ValueError("role must be 'sell' or 'buy'")
     asset = operation.sell_asset if role == "sell" else operation.buy_asset
     symbol = _normalize_symbol(asset)
     if not symbol:
-        raise ValueError("Ativo sem ticker válido para MT5")
+        raise ValueError("Asset without a valid ticker for MT5")
 
     quantity = operation.sell_quantity if role == "sell" else operation.buy_quantity
     price = operation.sell_price if role == "sell" else operation.buy_price
     if price is None:
-        raise ValueError("Preço não informado para a ponta " + role)
+        raise ValueError("Price not provided for role " + role)
     if quantity is None or quantity <= 0:
-        raise ValueError("Quantidade inválida para a ponta " + role)
+        raise ValueError("Invalid quantity for role " + role)
 
     volume = float(quantity)
 
@@ -115,42 +123,147 @@ def _build_trade_payload(operation: Operation, role: str) -> dict[str, object]:
 
 
 def execute_pair_trade(operation: Operation) -> list[dict[str, object]]:
-    """Dispara as ordens de compra e venda via MT5 Bridge e retorna o resultado."""
-    logger.info("MT5: iniciando execute_pair_trade para operação %s", operation.pk)
+    """Dispatch the paired sell/buy orders through the MT5 bridge."""
+    logger.info("MT5: starting execute_pair_trade for operation %s", operation.pk)
 
     try:
-        sell_payload = _build_trade_payload(operation, "sell")
-        buy_payload = _build_trade_payload(operation, "buy")
-        trades = [sell_payload, buy_payload]
-        logger.debug("MT5: payloads montados para operação %s: %s", operation.pk, trades)
+        trade_contexts: list[dict[str, object]] = []
+        for role in ("sell", "buy"):
+            payload = _build_trade_payload(operation, role)
+            request_id = uuid.uuid4()
+            payload["request_id"] = str(request_id)
+            event = create_mt5_audit_event(
+                operation=operation,
+                leg=role,
+                payload=payload,
+                request_id=request_id,
+                action="OPEN",
+                reason=MT5_OPEN_REASON,
+            )
+            trade_contexts.append(
+                {
+                    "role": role,
+                    "leg_code": "A" if role == "sell" else "B",
+                    "payload": payload,
+                    "event": event,
+                }
+            )
+            _log_mt5_order_event(event, "request")
+        trades = [context["payload"] for context in trade_contexts]
+        logger.debug(
+            "MT5: payloads prepared for operation %s: %s",
+            operation.pk,
+            trades,
+        )
     except ValueError as exc:
-        logger.error("MT5: erro ao montar payload da operação %s: %s", operation.pk, exc)
+        logger.error("MT5: failed to build payload for operation %s: %s", operation.pk, exc)
         raise MT5TradeExecutionError(str(exc)) from exc
 
     try:
-        logger.info("MT5: enviando trades para o bridge (operação %s)", operation.pk)
-        if getattr(settings, "MT5_DRY_RUN", False):
-            logger.info("MT5: dry run habilitado – não enviando trades para operação %s", operation.pk)
-            logger.info("MT5: resultado simulado para operação %s: %s", operation.pk, trades)
-            return [{"symbol": trade["symbol"], "ticket": 0, "retcode": 0, "price": trade["price"], "volume": trade["lots"], "comment": "dry-run"} for trade in trades]
-        logger.info("MT5: payload final prontos para envio (symbol/lots/quantity): %s", [
-            { "symbol": trade["symbol"], "lots": trade["lots"], "quantity": trade["quantity"] }
-            for trade in trades
-        ])
-        result = execute_trades(trades)
-        logger.info("MT5: resposta do bridge para operação %s: %s", operation.pk, result)
-
-        leg_payloads = [
-            ("A", sell_payload),
-            ("B", buy_payload),
+        logger.info("MT5: sending trades to bridge for operation %s", operation.pk)
+        payload_summary = [
+            {
+                "symbol": ctx["payload"]["symbol"],
+                "lots": ctx["payload"]["lots"],
+                "quantity": ctx["payload"]["quantity"],
+            }
+            for ctx in trade_contexts
         ]
-        for idx, (leg, payload) in enumerate(leg_payloads):
+        logger.info(
+            "MT5: final payloads (symbol/lots/quantity): %s",
+            payload_summary,
+        )
+        if getattr(settings, "MT5_DRY_RUN", False):
+            logger.info(
+                "MT5: dry run mode enabled, skipping MT5 bridge for operation %s",
+                operation.pk,
+            )
+            simulated_results: list[dict[str, object]] = []
+            for context in trade_contexts:
+                response = {
+                    "symbol": context["payload"]["symbol"],
+                    "ticket": 0,
+                    "order": 0,
+                    "deal": 0,
+                    "position": 0,
+                    "retcode": 0,
+                    "price": context["payload"]["price"],
+                    "volume": context["payload"]["lots"],
+                    "comment": "dry-run",
+                    "account_login": "",
+                    "account_server": "",
+                    "request_id": context["payload"].get("request_id"),
+                }
+                simulated_results.append(response)
+                update_mt5_audit_event(context["event"], response=response)
+                _log_mt5_order_event(context["event"], "response", response=response)
+            logger.info(
+                "MT5: dry run results for operation %s: %s",
+                operation.pk,
+                simulated_results,
+            )
+            return simulated_results
+        result = execute_trades(trades)
+        logger.info("MT5: bridge response for operation %s: %s", operation.pk, result)
+
+        for idx, context in enumerate(trade_contexts):
             response = result[idx] if isinstance(result, list) and idx < len(result) else {}
             if not isinstance(response, dict):
                 response = {}
-            _persist_mt5_trade(operation, leg, payload, response)
+            _persist_mt5_trade(operation, context["leg_code"], context["payload"], response)
+            update_mt5_audit_event(context["event"], response=response)
+            _log_mt5_order_event(context["event"], "response", response=response)
 
         return result
     except MT5BridgeError as exc:
-        logger.error("Falha na execução das ordens MT5 para a operação %s: %s", operation.pk, exc)
+        logger.error(
+            "MT5: failed to execute orders for operation %s: %s",
+            operation.pk,
+            exc,
+        )
+        for context in trade_contexts:
+            update_mt5_audit_event(
+                context["event"], response=None, error_message=str(exc)
+            )
+            _log_mt5_order_event(
+                context["event"], "error", response=None, error_message=str(exc)
+            )
         raise MT5TradeExecutionError(str(exc)) from exc
+
+
+def _log_mt5_order_event(
+    event: MT5AuditEvent,
+    stage: str,
+    response: dict[str, object] | None = None,
+    error_message: str | None = None,
+) -> None:
+    data: dict[str, object | None] = {
+        "timestamp": timezone.now().isoformat(),
+        "request_id": str(event.request_id),
+        "operation_id": event.operation_id,
+        "leg": event.leg,
+        "symbol": event.symbol,
+        "volume": event.volume,
+        "action": event.action,
+        "reason": event.reason,
+        "stage": stage,
+        "position_id": None,
+        "order": None,
+        "deal": None,
+        "ticket": None,
+        "retcode": None,
+        "message": None,
+        "login": None,
+        "server": None,
+        "error": error_message,
+    }
+    if response:
+        data["position_id"] = response.get("position")
+        data["order"] = response.get("order")
+        data["deal"] = response.get("deal")
+        data["ticket"] = response.get("ticket") or response.get("order")
+        data["retcode"] = response.get("retcode")
+        data["message"] = response.get("comment") or response.get("error")
+        data["login"] = response.get("account_login")
+        data["server"] = response.get("account_server")
+    logger.info("MT5Audit %s", json.dumps(data, default=str, ensure_ascii=False))
