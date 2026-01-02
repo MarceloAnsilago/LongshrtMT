@@ -61,3 +61,19 @@ def explain_close(identifier: int, from_dt: datetime, to_dt: datetime) -> Dict[s
         "to_dt": to_dt.isoformat(),
     }
     return _request("POST", "/api/history/explain_close", json=payload)
+
+
+def fetch_positions() -> list[dict[str, Any]]:
+    return _request("GET", "/api/positions").get("positions", [])
+
+
+def fetch_history_deals(from_dt: datetime, to_dt: datetime) -> list[dict[str, Any]]:
+    payload = {
+        "from_dt": from_dt.isoformat(),
+        "to_dt": to_dt.isoformat(),
+    }
+    return _request("POST", "/api/history/deals", json=payload).get("deals", [])
+
+
+def fetch_account_info() -> Dict[str, Any]:
+    return _request("GET", "/api/account_info")

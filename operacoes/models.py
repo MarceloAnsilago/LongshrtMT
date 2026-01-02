@@ -74,6 +74,10 @@ class Operation(models.Model):
     buy_value = models.DecimalField(max_digits=18, decimal_places=2)
     net_value = models.DecimalField(max_digits=18, decimal_places=2)
     capital_allocated = models.DecimalField(max_digits=18, decimal_places=2)
+    symbol = models.CharField(max_length=32, blank=True, default="")
+    entry_price = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
+    mt5_ticket = models.BigIntegerField(null=True, blank=True)
+    executed_at = models.DateTimeField(null=True, blank=True)
 
     entry_zscore = models.FloatField(null=True, blank=True)
     trade_plan = models.JSONField(null=True, blank=True)
@@ -155,6 +159,10 @@ class Operation(models.Model):
 
 
 class OperationMT5Trade(models.Model):
+    STATUS_OPEN = "aberto"
+    STATUS_MANUAL = "encerrado_manual"
+    STATUS_RESET = "encerrado_reset_demo"
+
     LEG_CHOICES = (
         ("A", "Perna A"),
         ("B", "Perna B"),
@@ -172,6 +180,7 @@ class OperationMT5Trade(models.Model):
     leg = models.CharField(max_length=1, choices=LEG_CHOICES)
     symbol = models.CharField(max_length=32)
     ticket = models.BigIntegerField()
+    position_id = models.BigIntegerField(null=True, blank=True)
     side = models.CharField(max_length=4, choices=SIDE_CHOICES)
     volume = models.FloatField()
     price_open = models.FloatField()
@@ -180,7 +189,9 @@ class OperationMT5Trade(models.Model):
     comment = models.CharField(max_length=64, blank=True, default="")
     opened_at = models.DateTimeField(default=timezone.now)
     raw_response = models.JSONField(null=True, blank=True)
-    status = models.CharField(max_length=32, blank=True, default="")
+    closed_at = models.DateTimeField(null=True, blank=True)
+    close_reason = models.CharField(max_length=64, blank=True, default="")
+    status = models.CharField(max_length=32, default=STATUS_OPEN)
 
     class Meta:
         unique_together = ("operation", "leg")
@@ -225,6 +236,53 @@ class MT5AuditEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.operation_id} {self.leg} {self.action} {self.request_id}"
+
+
+class MT5IncidentEvent(models.Model):
+    INCIDENT_TYPE_RESET = "RESET_DEMO_DETECTED"
+    INCIDENT_CHOICES = (
+        (INCIDENT_TYPE_RESET, "Reset demo detectado"),
+    )
+
+    incident_type = models.CharField(
+        max_length=64, choices=INCIDENT_CHOICES, default=INCIDENT_TYPE_RESET
+    )
+    operation = models.ForeignKey(
+        Operation,
+        related_name="mt5_incidents",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    trade = models.ForeignKey(
+        OperationMT5Trade,
+        related_name="incident_events",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    ticket = models.BigIntegerField(null=True, blank=True)
+    position_id = models.BigIntegerField(null=True, blank=True)
+    detected_at = models.DateTimeField(auto_now_add=True)
+    opened_at = models.DateTimeField(null=True, blank=True)
+    account_login = models.CharField(max_length=32, blank=True, default="")
+    account_server = models.CharField(max_length=128, blank=True, default="")
+    balance = models.FloatField(null=True, blank=True)
+    equity = models.FloatField(null=True, blank=True)
+    margin = models.FloatField(null=True, blank=True)
+    margin_free = models.FloatField(null=True, blank=True)
+    margin_mode = models.IntegerField(null=True, blank=True)
+    positions_total = models.PositiveIntegerField(default=0)
+    from_dt = models.DateTimeField()
+    to_dt = models.DateTimeField()
+    payload = models.JSONField(null=True, blank=True)
+    classification = models.CharField(max_length=32, blank=True, default="")
+
+    class Meta:
+        ordering = ["-detected_at"]
+
+    def __str__(self) -> str:
+        return f"{self.incident_type} trade_id={self.trade_id if self.trade_id else '---'}"
 
 
 class OperationMetricSnapshot(models.Model):

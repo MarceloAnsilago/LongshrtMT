@@ -219,6 +219,62 @@ class ExplainCloseResponse(BaseModel):
     deal: ExplainCloseDeal
 
 
+class HistoryDealsRequest(BaseModel):
+    from_dt: datetime
+    to_dt: datetime
+    symbol: Optional[str] = None
+
+
+class HistoryDeal(BaseModel):
+    timestamp: Optional[datetime]
+    symbol: Optional[str] = None
+    price: Optional[float] = None
+    volume: Optional[float] = None
+    profit: Optional[float] = None
+    entry: Optional[int] = None
+    reason: Optional[int] = None
+    magic: Optional[int] = None
+    order: Optional[int] = None
+    deal: Optional[int] = None
+    position_id: Optional[int] = None
+    ticket: Optional[int] = None
+    comment: Optional[str] = None
+
+
+class HistoryDealsResponse(BaseModel):
+    from_dt: datetime
+    to_dt: datetime
+    deals: List[HistoryDeal]
+
+
+class PositionSummary(BaseModel):
+    ticket: Optional[int]
+    position: Optional[int]
+    position_id: Optional[int]
+    symbol: Optional[str]
+    volume: Optional[float]
+    price_open: Optional[float]
+    price_current: Optional[float]
+    price: Optional[float]
+    time: Optional[datetime]
+    comment: Optional[str]
+    magic: Optional[int]
+
+
+class PositionsResponse(BaseModel):
+    positions: List[PositionSummary]
+
+
+class AccountInfoResponse(BaseModel):
+    login: Optional[int]
+    server: Optional[str]
+    balance: Optional[float]
+    equity: Optional[float]
+    margin: Optional[float]
+    margin_free: Optional[float]
+    margin_mode: Optional[int]
+
+
 def _deal_matches_identifier(deal: Any, identifier: int) -> bool:
     entry = getattr(deal, "entry", None)
     if entry != mt5.DEAL_ENTRY_OUT:
@@ -249,6 +305,59 @@ def _deal_to_summary(deal: Any) -> ExplainCloseDeal:
         deal_position_id=_cast_int(getattr(deal, "position_id", None)),
         deal_comment=getattr(deal, "comment", None),
         deal_magic=_cast_int(getattr(deal, "magic", None)),
+    )
+
+
+def _cast_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cast_timestamp(value: Any) -> datetime | None:
+    try:
+        if value is None:
+            return None
+        raw = float(value)
+    except (TypeError, ValueError):
+        return None
+    return datetime.fromtimestamp(raw, tz=timezone.utc)
+
+
+def _history_deal_to_dict(deal: Any) -> HistoryDeal:
+    return HistoryDeal(
+        timestamp=_cast_timestamp(getattr(deal, "time", None)),
+        symbol=getattr(deal, "symbol", None),
+        price=_cast_float(getattr(deal, "price", None)),
+        volume=_cast_float(getattr(deal, "volume", None)),
+        profit=_cast_float(getattr(deal, "profit", None)),
+        entry=_cast_int(getattr(deal, "entry", None)),
+        reason=_cast_int(getattr(deal, "reason", None)),
+        magic=_cast_int(getattr(deal, "magic", None)),
+        order=_cast_int(getattr(deal, "order", None)),
+        deal=_cast_int(getattr(deal, "deal", None)),
+        position_id=_cast_int(getattr(deal, "position_id", None)),
+        ticket=_cast_int(getattr(deal, "ticket", None)),
+        comment=getattr(deal, "comment", None),
+    )
+
+
+def _position_to_summary(position: Any) -> PositionSummary:
+    return PositionSummary(
+        ticket=_cast_int(getattr(position, "ticket", None)),
+        position=_cast_int(getattr(position, "position", None)),
+        position_id=_cast_int(getattr(position, "position_id", None)),
+        symbol=getattr(position, "symbol", None),
+        volume=_cast_float(getattr(position, "volume", None)),
+        price_open=_cast_float(getattr(position, "price_open", None)),
+        price_current=_cast_float(getattr(position, "price_current", None)),
+        price=_cast_float(getattr(position, "price", None)),
+        time=_cast_timestamp(getattr(position, "time", None)),
+        comment=getattr(position, "comment", None),
+        magic=_cast_int(getattr(position, "magic", None)),
     )
 
 
@@ -283,6 +392,47 @@ def explain_close(payload: ExplainCloseRequest):
     _validate_range(payload.from_dt, payload.to_dt)
     summary = _select_closing_deal(payload.identifier, payload.from_dt, payload.to_dt)
     return ExplainCloseResponse(identifier=payload.identifier, deal=summary)
+
+
+@app.post("/api/history/deals", response_model=HistoryDealsResponse)
+def history_deals(payload: HistoryDealsRequest):
+    _validate_range(payload.from_dt, payload.to_dt)
+    try:
+        deals = mt5.history_deals_get(payload.from_dt, payload.to_dt)
+    except Exception as exc:
+        logger.error("MT5 history deals failed: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc))
+    converted = [_history_deal_to_dict(deal) for deal in deals or []]
+    return HistoryDealsResponse(from_dt=payload.from_dt, to_dt=payload.to_dt, deals=converted)
+
+
+@app.get("/api/positions", response_model=PositionsResponse)
+def positions():
+    try:
+        raw = mt5.positions_get()
+    except Exception as exc:
+        logger.error("MT5 positions_get failed: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc))
+    if raw is None:
+        raise HTTPException(status_code=422, detail="Positions unavailable")
+    results = [_position_to_summary(position) for position in raw]
+    return PositionsResponse(positions=results)
+
+
+@app.get("/api/account_info", response_model=AccountInfoResponse)
+def account_info():
+    info = mt5.account_info()
+    if not info:
+        raise HTTPException(status_code=422, detail="Account info unavailable")
+    return AccountInfoResponse(
+        login=_cast_int(getattr(info, "login", None)),
+        server=getattr(info, "server", None),
+        balance=_cast_float(getattr(info, "balance", None)),
+        equity=_cast_float(getattr(info, "equity", None)),
+        margin=_cast_float(getattr(info, "margin", None)),
+        margin_free=_cast_float(getattr(info, "margin_free", None)),
+        margin_mode=_cast_int(getattr(info, "margin_mode", None)),
+    )
 
 
 # ------------------------------------------------------------

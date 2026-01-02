@@ -338,34 +338,6 @@
 
                         </tr>
 
-                        <tr>
-                          <td colspan="4">
-                            {% if item.mt5.A or item.mt5.B %}
-                              <div class="small text-body-secondary">
-                                <strong>Ordens MT5</strong>
-                                {% if item.mt5.A %}
-                                  <div>
-                                    A: {{ item.mt5.A.symbol }}
-                                    | Ticket #{{ item.mt5.A.ticket }}
-                                    | {{ item.mt5.A.side }}
-                                    | {{ item.mt5.A.volume|floatformat:0 }} @ {{ item.mt5.A.price_open|floatformat:2 }}
-                                    {% if item.mt5.A.status %}({{ item.mt5.A.status }}){% endif %}
-                                  </div>
-                                {% endif %}
-                                {% if item.mt5.B %}
-                                  <div>
-                                    B: {{ item.mt5.B.symbol }}
-                                    | Ticket #{{ item.mt5.B.ticket }}
-                                    | {{ item.mt5.B.side }}
-                                    | {{ item.mt5.B.volume|floatformat:0 }} @ {{ item.mt5.B.price_open|floatformat:2 }}
-                                    {% if item.mt5.B.status %}({{ item.mt5.B.status }}){% endif %}
-                                  </div>
-                                {% endif %}
-                              </div>
-                            {% endif %}
-                          </td>
-                        </tr>
-
                         <tr class="table-active text-uppercase small">
 
                           <td colspan="3">

@@ -36,7 +36,11 @@ from pairs.forms import UserMetricsConfigForm
 from pairs.models import Pair, UserMetricsConfig
 from operacoes.forms import OperationForm
 from operacoes.models import Operation, OperationMetricSnapshot, OperationMT5Trade
-from operacoes.services.mt5_trade import MT5TradeExecutionError, execute_pair_trade
+from operacoes.services.mt5_trade import (
+    MT5TradeExecutionError,
+    close_simulation_trades_for_operation,
+    execute_pair_trade,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -349,18 +353,30 @@ def _build_home_operations_payload(request):
                 z_delta_label = "--"
                 is_delta_positive = False
 
-        entry_net_direction = ""
-        if operation.net_value is not None:
-            entry_net_direction = "recebe" if operation.net_value >= 0 else "paga"
+        trades_qs = getattr(operation, "mt5_trades", None)
+        trades_by_leg = {trade.leg: trade for trade in (trades_qs.all() if trades_qs is not None else [])}
+        sell_trade = trades_by_leg.get("A")
+        buy_trade = trades_by_leg.get("B")
+
+        sell_qty_dec = Decimal(operation.sell_quantity)
+        buy_qty_dec = Decimal(operation.buy_quantity)
+
+        entry_sell_price = _to_decimal(getattr(sell_trade, "price_open", None)) or _to_decimal(operation.sell_price)
+        entry_buy_price = _to_decimal(getattr(buy_trade, "price_open", None)) or _to_decimal(operation.buy_price)
+
+        entry_sell_total = (entry_sell_price * sell_qty_dec).quantize(money_quant)
+        entry_buy_total = (entry_buy_price * buy_qty_dec).quantize(money_quant)
+        entry_net_value = (entry_sell_total - entry_buy_total).quantize(money_quant)
+        entry_net_direction = "recebe" if entry_net_value >= 0 else "paga"
 
         entry_prices = {
             "sell_qty_label": _fmt_int(operation.sell_quantity),
             "buy_qty_label": _fmt_int(operation.buy_quantity),
-            "sell_price_label": _fmt_money(operation.sell_price),
-            "buy_price_label": _fmt_money(operation.buy_price),
-            "sell_total_label": _fmt_money(operation.sell_value),
-            "buy_total_label": _fmt_money(operation.buy_value),
-            "net_label": _fmt_money(operation.net_value),
+            "sell_price_label": _fmt_money(entry_sell_price),
+            "buy_price_label": _fmt_money(entry_buy_price),
+            "sell_total_label": _fmt_money(entry_sell_total),
+            "buy_total_label": _fmt_money(entry_buy_total),
+            "net_label": _fmt_money(entry_net_value),
             "net_direction_label": entry_net_direction,
         }
 
@@ -436,8 +452,6 @@ def _build_home_operations_payload(request):
                     "retorno_total_label": _format_pct(pnl_stats.get("retorno_total_%")),
                 }
 
-        trades_qs = getattr(operation, "mt5_trades", None)
-        trades_by_leg = {trade.leg: trade for trade in (trades_qs.all() if trades_qs is not None else [])}
         mt5_info = {
             "A": _serialize_mt5_trade(trades_by_leg.get("A")),
             "B": _serialize_mt5_trade(trades_by_leg.get("B")),
@@ -2000,7 +2014,26 @@ def operacao_encerrar(request, pk: int):
         if action == "close":
             operation.status = Operation.STATUS_CLOSED
             operation.save(update_fields=["status", "updated_at"])
-            messages.success(request, f"Operacao {pair_label} encerrada com sucesso.")
+            close_report = None
+            if not operation.is_real:
+                close_report = close_simulation_trades_for_operation(operation)
+            summary = f"Operacao {pair_label} encerrada com sucesso."
+            if operation.is_real:
+                summary += " Conta real: as ordens permanecem abertas no MT5."
+            elif close_report:
+                details = []
+                closed = close_report.get("closed", 0)
+                missing = close_report.get("missing", 0)
+                if closed:
+                    details.append(f"{closed} perna(s) fechada(s)")
+                if missing:
+                    details.append(f"{missing} ja nao constam no MT5")
+                if details:
+                    summary += " MT5: " + "; ".join(details) + "."
+            messages.success(request, summary)
+            if close_report:
+                for error in close_report.get("errors", []):
+                    messages.warning(request, f"MT5: {error}")
             return redirect("core:home")
 
     entry_snapshot = None

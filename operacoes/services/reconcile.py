@@ -46,10 +46,10 @@ def reconcile_mt5_positions() -> Sequence[OperationMT5Trade]:
         reconciled: list[OperationMT5Trade] = []
 
         with transaction.atomic():
-            trades = OperationMT5Trade.objects.filter(status="aberto")
+            trades = OperationMT5Trade.objects.filter(status=OperationMT5Trade.STATUS_OPEN)
             for trade in trades:
                 if trade.ticket not in open_tickets:
-                    trade.status = "encerrado_manual"
+                    trade.status = OperationMT5Trade.STATUS_MANUAL
                     trade.save(update_fields=["status"])
                     reconciled.append(trade)
 
