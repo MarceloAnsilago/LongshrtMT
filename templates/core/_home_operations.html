@@ -392,14 +392,28 @@
                           | {{ item.mt5.A.volume|floatformat:2 }}
                           @ {{ item.mt5.A.price_open|floatformat:2 }}
                         </div>
-                        {% if item.mt5.A.status %}
+                            {% if item.mt5.A.status %}
                           <div class="text-body-tertiary">
                             Status: {{ item.mt5.A.status }}
                             {% if item.mt5.A.opened_at %}
                               | Aberto em {{ item.mt5.A.opened_at|date:"d/m H:i" }}
                             {% endif %}
+                            {% if item.mt5.A.expiration_at %}
+                              | Expira em {{ item.mt5.A.expiration_at|date:"d/m H:i" }}
+                              {% if item.mt5.A.expiration_days_remaining is not none %}
+                                ({{ item.mt5.A.expiration_days_remaining }} dia{% if item.mt5.A.expiration_days_remaining != 1 %}s{% endif %})
+                              {% endif %}
+                            {% endif %}
                           </div>
                         {% endif %}
+                            {% if item.mt5.A.expiration_at and not item.mt5.A.status %}
+                              <div class="text-body-tertiary">
+                                Expira em {{ item.mt5.A.expiration_at|date:"d/m H:i" }}
+                                {% if item.mt5.A.expiration_days_remaining is not none %}
+                                  ({{ item.mt5.A.expiration_days_remaining }} dia{% if item.mt5.A.expiration_days_remaining != 1 %}s{% endif %})
+                                {% endif %}
+                              </div>
+                            {% endif %}
                       </div>
                     {% endif %}
                     {% if item.mt5.B %}
@@ -418,8 +432,22 @@
                             {% if item.mt5.B.opened_at %}
                               | Aberto em {{ item.mt5.B.opened_at|date:"d/m H:i" }}
                             {% endif %}
+                            {% if item.mt5.B.expiration_at %}
+                              | Expira em {{ item.mt5.B.expiration_at|date:"d/m H:i" }}
+                              {% if item.mt5.B.expiration_days_remaining is not none %}
+                                ({{ item.mt5.B.expiration_days_remaining }} dia{% if item.mt5.B.expiration_days_remaining != 1 %}s{% endif %})
+                              {% endif %}
+                            {% endif %}
                           </div>
                         {% endif %}
+                            {% if item.mt5.B.expiration_at and not item.mt5.B.status %}
+                              <div class="text-body-tertiary">
+                                Expira em {{ item.mt5.B.expiration_at|date:"d/m H:i" }}
+                                {% if item.mt5.B.expiration_days_remaining is not none %}
+                                  ({{ item.mt5.B.expiration_days_remaining }} dia{% if item.mt5.B.expiration_days_remaining != 1 %}s{% endif %})
+                                {% endif %}
+                              </div>
+                            {% endif %}
                       </div>
                     {% endif %}
                   {% else %}

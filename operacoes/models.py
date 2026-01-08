@@ -191,6 +191,7 @@ class OperationMT5Trade(models.Model):
     raw_response = models.JSONField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
     close_reason = models.CharField(max_length=64, blank=True, default="")
+    expiration_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=32, default=STATUS_OPEN)
 
     class Meta:

@@ -5,6 +5,8 @@ from datetime import date
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
+from math import ceil
+import uuid
 
 from dateutil.relativedelta import relativedelta
 
@@ -34,7 +36,6 @@ from mt5api.mt5client import get_latest_price
 from pairs.constants import DEFAULT_BASE_WINDOW, DEFAULT_WINDOWS
 from pairs.forms import UserMetricsConfigForm
 from pairs.models import Pair, UserMetricsConfig
-from operacoes.forms import OperationForm
 from operacoes.models import Operation, OperationMetricSnapshot, OperationMT5Trade
 from operacoes.services.mt5_trade import (
     MT5TradeExecutionError,
@@ -44,6 +45,8 @@ from operacoes.services.mt5_trade import (
 
 logger = logging.getLogger(__name__)
 
+
+HOME_CLOSED_NOTIFICATIONS_KEY = "home_closed_operations"
 
 MONTH_NAMES_PT = (
     "",
@@ -60,6 +63,19 @@ MONTH_NAMES_PT = (
     "Novembro",
     "Dezembro",
 )
+
+
+def _enqueue_home_closed_notification(request, label: str, auto_close: bool) -> None:
+    notifications = list(request.session.get(HOME_CLOSED_NOTIFICATIONS_KEY, []))
+    notifications.append(
+        {
+            "id": str(uuid.uuid4()),
+            "label": label,
+            "auto_close": bool(auto_close),
+            "timestamp": timezone.localtime().isoformat(),
+        }
+    )
+    request.session[HOME_CLOSED_NOTIFICATIONS_KEY] = notifications[-10:]
 
 
 def _build_home_operations_payload(request):
@@ -211,6 +227,15 @@ def _build_home_operations_payload(request):
     def _serialize_mt5_trade(trade: OperationMT5Trade | None) -> dict | None:
         if not trade:
             return None
+        expiration_days = None
+        if trade.expiration_at:
+            expiration_local = timezone.localtime(trade.expiration_at)
+            now_local = timezone.localtime(timezone.now())
+            delta_seconds = (expiration_local - now_local).total_seconds()
+            if delta_seconds <= 0:
+                expiration_days = 0
+            else:
+                expiration_days = ceil(delta_seconds / 86400)
         return {
             "leg": trade.leg,
             "symbol": trade.symbol,
@@ -223,6 +248,8 @@ def _build_home_operations_payload(request):
             "status": trade.status,
             "comment": trade.comment,
             "opened_at": trade.opened_at,
+            "expiration_at": trade.expiration_at,
+            "expiration_days_remaining": expiration_days,
         }
 
     for operation in operations_qs:
@@ -585,6 +612,7 @@ def _build_home_operations_payload(request):
 
 
 def home(request):
+    closed_notifications = list(request.session.get(HOME_CLOSED_NOTIFICATIONS_KEY, []))
     return render(
         request,
         "core/home.html",
@@ -595,8 +623,17 @@ def home(request):
             "refresh_live_url": reverse("core:refresh_live_quotes"),
             "refresh_metrics_url": reverse("core:refresh_operation_metrics"),
             "home_live_url": reverse("core:home_live_quotes"),
+            "closed_notifications": closed_notifications,
+            "closed_notifications_ack_url": reverse("core:ack_closed_operations"),
         },
     )
+
+
+@login_required
+@require_POST
+def acknowledge_closed_operations(request):
+    request.session.pop(HOME_CLOSED_NOTIFICATIONS_KEY, None)
+    return JsonResponse({"ok": True})
 
 
 @login_required
@@ -1414,8 +1451,6 @@ def operacoes(request):
         if source_value not in {"analysis", "manual"}:
             source_value = "analysis"
 
-        form = OperationForm(posted)
-
         if errors:
             return respond_with_errors()
 
@@ -1518,13 +1553,8 @@ def operacoes(request):
             if sell_ticker == right_ticker and buy_ticker == left_ticker:
                 orientation = "inverted"
 
-        if form.is_valid():
-            operation = form.save(commit=False)
-        else:
-            operation = form.instance
-            if form.errors:
-                logger.warning("OperationForm inválido ao gravar is_real: %s", form.errors)
-            operation.is_real = False
+        operation = Operation()
+        operation.is_real = True
 
         operation.user = request.user
         operation.pair = pair_obj
@@ -1884,7 +1914,6 @@ def operacoes(request):
         "summary": summary,
         "existing_operation_info": existing_operation_info,
         "valuation": valuation,
-        "form": OperationForm(),
     }
     return render(request, "core/operacoes.html", context)
 
@@ -2012,6 +2041,7 @@ def operacao_encerrar(request, pk: int):
             messages.success(request, f"Operacao {pair_label} excluida com sucesso.")
             return redirect("core:home")
         if action == "close":
+            auto_close_triggered = request.POST.get("auto_close_triggered") == "1"
             operation.status = Operation.STATUS_CLOSED
             operation.save(update_fields=["status", "updated_at"])
             close_report = None
@@ -2034,6 +2064,8 @@ def operacao_encerrar(request, pk: int):
             if close_report:
                 for error in close_report.get("errors", []):
                     messages.warning(request, f"MT5: {error}")
+            if auto_close_triggered:
+                _enqueue_home_closed_notification(request, pair_label, auto_close=True)
             return redirect("core:home")
 
     entry_snapshot = None
@@ -2408,6 +2440,7 @@ def operacao_refresh(request, pk: int):
             "ok": True,
             "current_metrics": current_metrics,
             "current_zscore_label": current_z_label,
+            "current_zscore_value": current_zscore,
             "entry_zscore_label": entry_z_label,
             "z_delta_label": z_delta_label,
             "is_delta_positive": is_delta_positive,

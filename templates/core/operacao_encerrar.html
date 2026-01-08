@@ -342,13 +342,32 @@
       {% else %}
         <div class="mt-3 text-body-secondary small">Serie de z-score indisponivel no momento.</div>
       {% endif %}
-      <form method="post" class="mt-3 d-flex flex-column flex-sm-row align-items-stretch align-items-sm-center gap-2">
+      <form
+        method="post"
+        id="autoCloseForm"
+        data-auto-close-form
+        class="mt-3 d-flex flex-column flex-sm-row align-items-stretch align-items-sm-center gap-2"
+      >
         {% csrf_token %}
         <input type="hidden" name="action" value="close">
-        <button type="submit" class="btn btn-danger btn-sm w-100 w-sm-auto">Encerrar a operação</button>
-        <p class="text-body-secondary small mb-0">
-          Marque o fechamento desta operacao para liberar os cards do inicio.
-        </p>
+        <div class="d-flex flex-column flex-sm-row align-items-stretch align-items-sm-center gap-2">
+          <button type="submit" class="btn btn-danger btn-sm w-100 w-sm-auto">Encerrar a operação</button>
+          <p class="text-body-secondary small mb-0">
+            Marque o fechamento desta operacao para liberar os cards do inicio.
+          </p>
+        </div>
+        <div class="form-check form-switch mt-2">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            id="autoCloseCenterCheckbox"
+            checked
+          />
+          <label class="form-check-label small" for="autoCloseCenterCheckbox">
+            Encerrar na média central
+          </label>
+        </div>
+        <input type="hidden" name="auto_close_triggered" id="autoCloseTriggeredInput" value="0">
       </form>
     </div>
   </div>
@@ -477,6 +496,28 @@
         const metricsList = document.getElementById("currentMetricsList");
         let isFetching = false;
         const originalBtnLabel = refreshBtn ? refreshBtn.textContent.trim() : "Atualizar agora";
+        const autoCloseCheckbox = document.getElementById("autoCloseCenterCheckbox");
+        const autoCloseHiddenInput = document.getElementById("autoCloseTriggeredInput");
+        const autoCloseForm = document.getElementById("autoCloseForm");
+        const AUTO_CLOSE_THRESHOLD = 0.05;
+        let autoCloseInFlight = false;
+
+        function maybeAutoClose(zscoreValue) {
+          if (!autoCloseCheckbox || !autoCloseCheckbox.checked || !autoCloseForm || autoCloseInFlight) {
+            return;
+          }
+          if (typeof zscoreValue !== "number" || Number.isNaN(zscoreValue)) {
+            return;
+          }
+          if (Math.abs(zscoreValue) > AUTO_CLOSE_THRESHOLD) {
+            return;
+          }
+          autoCloseInFlight = true;
+          if (autoCloseHiddenInput) {
+            autoCloseHiddenInput.value = "1";
+          }
+          autoCloseForm.submit();
+        }
 
         function renderMetrics(metrics) {
           if (!metricsList || !Array.isArray(metrics)) {
@@ -616,6 +657,7 @@
             }
             renderMetrics(data.current_metrics);
             renderPnlSummary(data.pnl_summary);
+            maybeAutoClose(typeof data.current_zscore_value === "number" ? data.current_zscore_value : null);
           } catch (err) {
             console.error("Falha ao atualizar os detalhes da operacao", err);
           } finally {

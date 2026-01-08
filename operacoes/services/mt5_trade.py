@@ -3,14 +3,19 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Tuple
 
 from django.conf import settings
 from django.utils import timezone
 
+from dateutil.relativedelta import relativedelta
+
 from acoes.models import Asset
 from mt5_bridge_client.mt5client import MT5BridgeError, execute_trades, fetch_positions
+from mt5api.mt5client import MT5BridgeError as MT5ApiBridgeError, get_latest_price
 from operacoes.models import MT5AuditEvent, Operation, OperationMT5Trade
 from operacoes.services.mt5_audit import (
     create_mt5_audit_event,
@@ -64,7 +69,80 @@ def _safe_int(value: object) -> int | None:
         return None
 
 
-def _persist_mt5_trade(operation: Operation, leg: str, payload: dict[str, object], response: dict[str, object]) -> None:
+def _safe_decimal(value: object | None) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (TypeError, InvalidOperation, ValueError):
+        return None
+
+
+def _infer_digits(value: Decimal | None) -> int:
+    if not value:
+        return 2
+    exponent = -value.as_tuple().exponent
+    return max(2, exponent)
+
+
+def _latest_market_price(symbol: str, fallback_price: Decimal | None) -> Decimal:
+    latest = None
+    try:
+        latest = get_latest_price(symbol)
+    except MT5ApiBridgeError:
+        latest = None
+    latest_decimal = _safe_decimal(latest)
+    if latest_decimal is not None and latest_decimal > 0:
+        return latest_decimal
+    if fallback_price is not None and fallback_price > 0:
+        return fallback_price
+    raise ValueError(f"Cannot determine latest price for {symbol}")
+
+
+def _calculate_limit_price(market_price: Decimal, role: str, digits: int) -> Decimal:
+    directions = {
+        "buy": Decimal("0.999"),
+        "sell": Decimal("1.001"),
+    }
+    multiplier = directions.get(role, Decimal("1"))
+    step = Decimal(f"1e-{digits}")
+    limit_price = (market_price * multiplier).quantize(step, rounding=ROUND_HALF_UP)
+    if role == "buy" and limit_price >= market_price:
+        limit_price = max(market_price - step, step)
+    if role == "sell" and limit_price <= market_price:
+        limit_price = max(market_price + step, step)
+    if limit_price <= 0:
+        limit_price = step
+    return limit_price
+
+
+def _simulation_expiration(now: datetime | None = None) -> datetime:
+    base = now or timezone.now()
+    return base + relativedelta(months=3)
+
+
+def _parse_expiration_value(value: object | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+def _persist_mt5_trade(
+    operation: Operation,
+    leg: str,
+    payload: dict[str, object],
+    response: dict[str, object],
+    client_expiration: datetime | None = None,
+) -> None:
     symbol = payload.get("symbol", "")
     volume = _safe_float(response.get("volume")) or _safe_float(payload.get("lots")) or 0.0
     price_open = _safe_float(response.get("price")) or _safe_float(payload.get("price")) or 0.0
@@ -80,6 +158,9 @@ def _persist_mt5_trade(operation: Operation, leg: str, payload: dict[str, object
             opened_at = timezone.now()
     else:
         opened_at = opened_at_val or timezone.now()
+    expiration_at = _parse_expiration_value(payload.get("expiration"))
+    if expiration_at is None and client_expiration:
+        expiration_at = client_expiration
 
     OperationMT5Trade.objects.update_or_create(
         operation=operation,
@@ -96,12 +177,15 @@ def _persist_mt5_trade(operation: Operation, leg: str, payload: dict[str, object
             "comment": comment,
             "opened_at": opened_at,
             "raw_response": response,
+            "expiration_at": expiration_at,
             "status": status,
         },
     )
 
 
-def _build_trade_payload(operation: Operation, role: str) -> dict[str, object]:
+def _build_trade_payload(
+    operation: Operation, role: str, *, expiration_at: datetime | None = None
+) -> dict[str, object]:
     if role not in {"sell", "buy"}:
         raise ValueError("role must be 'sell' or 'buy'")
     asset = operation.sell_asset if role == "sell" else operation.buy_asset
@@ -117,6 +201,9 @@ def _build_trade_payload(operation: Operation, role: str) -> dict[str, object]:
         raise ValueError("Invalid quantity for role " + role)
 
     volume = float(quantity)
+    price_decimal = _safe_decimal(price)
+    if price_decimal is None:
+        raise ValueError("Price for role {} is invalid".format(role))
 
     payload: dict[str, object] = {
         "symbol": symbol,
@@ -130,6 +217,32 @@ def _build_trade_payload(operation: Operation, role: str) -> dict[str, object]:
         "type_time": "GTC",
         "type_filling": "IOC",
     }
+    order_type_override = None
+    type_time_label = payload["type_time"]
+    if not operation.is_real:
+        market_price = _latest_market_price(symbol, price_decimal)
+        digits = max(_infer_digits(market_price), _infer_digits(price_decimal))
+        limit_price = _calculate_limit_price(market_price, role, digits)
+        order_type_override = "SELL_LIMIT" if role == "sell" else "BUY_LIMIT"
+        payload["order_type"] = order_type_override
+        payload["price"] = float(limit_price)
+    else:
+        payload["price"] = float(price_decimal)
+    if expiration_at:
+        payload["type_time"] = "SPECIFIED"
+        payload["expiration"] = expiration_at.isoformat()
+        type_time_label = "SPECIFIED"
+    if order_type_override:
+        logger.info(
+            "MT5 pending simulation order: symbol=%s side=%s last_price=%s limit_price=%s expiration=%s type_time=%s order_type=%s",
+            symbol,
+            role,
+            float(market_price),
+            float(limit_price),
+            expiration_at.isoformat() if expiration_at else "unset",
+            type_time_label,
+            order_type_override,
+        )
     return payload
 
 
@@ -137,10 +250,18 @@ def execute_pair_trade(operation: Operation) -> list[dict[str, object]]:
     """Dispatch the paired sell/buy orders through the MT5 bridge."""
     logger.info("MT5: starting execute_pair_trade for operation %s", operation.pk)
 
+    display_expiration = _simulation_expiration()
+    bridge_expiration = None if operation.is_real else display_expiration
+    logger.info(
+        "MT5: orders for operation %s expire at %s",
+        operation.pk,
+        display_expiration.isoformat(),
+    )
+
     try:
         trade_contexts: list[dict[str, object]] = []
         for role in ("sell", "buy"):
-            payload = _build_trade_payload(operation, role)
+            payload = _build_trade_payload(operation, role, expiration_at=bridge_expiration)
             request_id = uuid.uuid4()
             payload["request_id"] = str(request_id)
             event = create_mt5_audit_event(
@@ -221,7 +342,13 @@ def execute_pair_trade(operation: Operation) -> list[dict[str, object]]:
             response = result[idx] if isinstance(result, list) and idx < len(result) else {}
             if not isinstance(response, dict):
                 response = {}
-            _persist_mt5_trade(operation, context["leg_code"], context["payload"], response)
+            _persist_mt5_trade(
+                operation,
+                context["leg_code"],
+                context["payload"],
+                response,
+                client_expiration=display_expiration,
+            )
             update_mt5_audit_event(context["event"], response=response)
             _log_mt5_order_event(context["event"], "response", response=response)
 

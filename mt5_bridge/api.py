@@ -161,6 +161,8 @@ class TradeOrder(BaseModel):
     price: Optional[float] = None
     deviation: Optional[int] = None
     comment: Optional[str] = None
+    expiration: Optional[datetime] = None
+    order_type: Optional[str] = None
     type_time: TradeTimeLiteral = "GTC"
     type_filling: TradeFillingLiteral = "IOC"
     request_id: Optional[str] = None
@@ -548,6 +550,16 @@ _FILLING_MAP: Dict[str, int] = {
 }
 
 
+_ORDER_TYPE_MAP: Dict[str, int] = {
+    "BUY": mt5.ORDER_TYPE_BUY,
+    "SELL": mt5.ORDER_TYPE_SELL,
+    "BUY_LIMIT": mt5.ORDER_TYPE_BUY_LIMIT,
+    "SELL_LIMIT": mt5.ORDER_TYPE_SELL_LIMIT,
+    "BUY_STOP": mt5.ORDER_TYPE_BUY_STOP,
+    "SELL_STOP": mt5.ORDER_TYPE_SELL_STOP,
+}
+
+
 def _resolve_volume(order: TradeOrder) -> float:
     if order.lots is not None and order.lots > 0:
         return float(order.lots)
@@ -574,6 +586,10 @@ def _resolve_price(order: TradeOrder, symbol: str) -> float:
 
 
 def _order_type(order: TradeOrder) -> int:
+    if order.order_type:
+        override = (order.order_type or "").strip().upper()
+        if override in _ORDER_TYPE_MAP:
+            return _ORDER_TYPE_MAP[override]
     return mt5.ORDER_TYPE_BUY if order.side == "buy" else mt5.ORDER_TYPE_SELL
 
 
@@ -641,6 +657,17 @@ def _execute_trade(order: TradeOrder) -> TradeResult:
         "type_time": _TIME_MAP.get(order.type_time, mt5.ORDER_TIME_GTC),
         "type_filling": _FILLING_MAP.get(order.type_filling, mt5.ORDER_FILLING_IOC),
     }
+    expiration_dt = order.expiration
+    if expiration_dt:
+        if expiration_dt.tzinfo is None:
+            expiration_dt = expiration_dt.replace(tzinfo=timezone.utc)
+        trade_request["expiration"] = expiration_dt
+        logger.info(
+            "MT5: using expiration %s for order %s/%s",
+            expiration_dt.isoformat(),
+            symbol,
+            order.side,
+        )
     if order.request_id:
         trade_request["request_id"] = order.request_id
 

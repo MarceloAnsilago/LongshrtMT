@@ -17,7 +17,8 @@ from acoes.models import Asset
 from cotacoes.models import QuoteDaily
 
 # Util: half-life para OU discreto via regressão Δs_t = α + ρ s_{t-1} + ε
-def _half_life(spread: pd.Series) -> float | None:
+def _half_life(spread: pd.Series, *, avg_days: float | None = None) -> float | None:
+    # avg_days converte de periodos para dias corridos quando informado
     s = spread.dropna()
     if len(s) < 3:
         return None
@@ -35,9 +36,12 @@ def _half_life(spread: pd.Series) -> float | None:
         # evitar log de <=0
         if 1 + rho <= 0:
             return None
-        hl = -np.log(2) / np.log(1 + rho)
-        if np.isfinite(hl) and hl > 0:
-            return float(hl)
+        # usa log1p para estabilidade numerica quando rho ~ 0
+        hl_periods = -np.log(2) / np.log1p(rho)
+        if np.isfinite(hl_periods) and hl_periods > 0:
+            if avg_days is not None and avg_days > 0:
+                return float(hl_periods * avg_days)
+            return float(hl_periods)
         return None
     except Exception:
         return None
@@ -250,7 +254,13 @@ def compute_pair_window_metrics(
             adf_pvalue = float(adf_res[1])
         except Exception:
             adf_pvalue = None
-        half_life = _half_life(spread)
+        avg_days: float | None = None
+        dates = pd.to_datetime(df["date"], errors="coerce")
+        if not dates.isna().all():
+            day_gaps = dates.diff().dt.total_seconds().div(86400).dropna()
+            if not day_gaps.empty:
+                avg_days = float(day_gaps.mean())
+        half_life = _half_life(spread, avg_days=avg_days)
         result["ready_for_approval"] = True
         result["skip_reason"] = None
     else:

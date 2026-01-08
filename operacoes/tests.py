@@ -12,6 +12,7 @@ from django.utils import timezone
 from acoes.models import Asset
 from operacoes.models import Operation, OperationMT5Trade, MT5IncidentEvent
 from operacoes.services.mt5_reset import detect_demo_reset_for_open_trades
+from operacoes.services.mt5_trade import _build_trade_payload, _simulation_expiration
 
 
 class DemoResetDetectorTest(TestCase):
@@ -120,6 +121,66 @@ class DemoResetDetectorTest(TestCase):
         self.trade.refresh_from_db()
         self.assertEqual(self.trade.status, OperationMT5Trade.STATUS_OPEN)
         self.assertFalse(MT5IncidentEvent.objects.filter(trade=self.trade).exists())
+
+
+class MT5TradePayloadTests(TestCase):
+    def setUp(self) -> None:
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(username="payload-test", password="password")
+        self.sell_asset = Asset.objects.create(ticker="PETR4")
+        self.buy_asset = Asset.objects.create(ticker="VALE3")
+
+    def _create_operation(self, *, is_real: bool) -> Operation:
+        return Operation.objects.create(
+            user=self.user,
+            left_asset=self.sell_asset,
+            right_asset=self.buy_asset,
+            sell_asset=self.sell_asset,
+            buy_asset=self.buy_asset,
+            window=220,
+            orientation="default",
+            source="manual",
+            sell_quantity=100,
+            buy_quantity=100,
+            lot_size=100,
+            lot_multiplier=1,
+            sell_price=Decimal("10.00"),
+            buy_price=Decimal("10.00"),
+            sell_value=Decimal("1000.00"),
+            buy_value=Decimal("1000.00"),
+            net_value=Decimal("0.00"),
+            capital_allocated=Decimal("2000.00"),
+            is_real=is_real,
+        )
+
+    def test_simulator_payload_adds_specified_expiration(self):
+        operation = self._create_operation(is_real=False)
+        expiration = _simulation_expiration()
+        payload = _build_trade_payload(operation, "sell", expiration_at=expiration)
+        self.assertEqual(payload["type_time"], "SPECIFIED")
+        self.assertEqual(payload["expiration"], expiration.isoformat())
+        self.assertEqual(payload["order_type"], "SELL_LIMIT")
+
+    @patch("operacoes.services.mt5_trade.get_latest_price")
+    def test_simulation_payload_uses_limit_order(self, latest_price):
+        latest_price.return_value = 100.0
+        operation = self._create_operation(is_real=False)
+        expiration = _simulation_expiration()
+        sell_payload = _build_trade_payload(operation, "sell", expiration_at=expiration)
+        buy_payload = _build_trade_payload(operation, "buy", expiration_at=expiration)
+        self.assertEqual(sell_payload["order_type"], "SELL_LIMIT")
+        self.assertEqual(buy_payload["order_type"], "BUY_LIMIT")
+        self.assertEqual(sell_payload["type_time"], "SPECIFIED")
+        self.assertEqual(buy_payload["type_time"], "SPECIFIED")
+        self.assertGreater(sell_payload["price"], 100.0)
+        self.assertLess(buy_payload["price"], 100.0)
+
+    def test_real_payload_defaults_to_gtc_without_expiration(self):
+        operation = self._create_operation(is_real=True)
+        payload = _build_trade_payload(operation, "buy")
+        self.assertEqual(payload["type_time"], "GTC")
+        self.assertNotIn("expiration", payload)
+        self.assertIsNone(payload.get("order_type"))
 
     @patch("operacoes.services.mt5_reset.fetch_mt5_account_info")
     @patch("operacoes.services.mt5_reset.fetch_mt5_history_deals")

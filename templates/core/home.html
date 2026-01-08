@@ -45,6 +45,41 @@
 
 <div class="py-3">
 
+  {% if closed_notifications %}
+    <div
+      id="home-closed-notifications"
+      class="alert alert-warning d-flex flex-column gap-2 mb-3"
+      role="alert"
+      data-url="{{ closed_notifications_ack_url }}"
+    >
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <div>
+          <strong class="d-block">Operações encerradas</strong>
+          <span class="small text-body-secondary">
+            {{ closed_notifications|length }} registro{% if closed_notifications|length != 1 %}s{% endif %} encerrado{% if closed_notifications|length != 1 %}s{% endif %} recentemente.
+          </span>
+        </div>
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-dark"
+          id="home-close-notifications-btn"
+        >
+          OK
+        </button>
+      </div>
+      <ul class="mb-0 small ps-3">
+        {% for note in closed_notifications %}
+          <li>
+            {{ note.label }}
+            {% if note.auto_close %}
+              <span class="badge bg-info text-dark ms-1">Automático</span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
   <div class="d-flex flex-column flex-sm-row align-items-start align-items-sm-center justify-content-between gap-3 mb-3">
     <div>
       <h1 class="h5 fw-semibold mb-1">Operacoes em andamento</h1>
@@ -107,11 +142,44 @@ document.addEventListener("DOMContentLoaded", () => {
   const metricsBtn = document.getElementById("home-refresh-metrics-btn");
   const metricsFeedback = document.getElementById("home-refresh-metrics-feedback");
   let metricsUrl = metricsBtn?.dataset?.url;
+  const OPERATIONS_POLL_MS = 15000;
+  let operationsTimer;
 
   const getCookie = (name) => {
     const match = document.cookie.match(new RegExp("(^|;)\\s*" + name + "=([^;]+)"));
     return match ? decodeURIComponent(match[2]) : null;
   };
+
+  const closedNotificationsContainer = document.getElementById("home-closed-notifications");
+  const closedNotificationsAckUrl = closedNotificationsContainer?.dataset?.url;
+  const closeNotificationsBtn = document.getElementById("home-close-notifications-btn");
+
+  const acknowledgeClosedNotifications = () => {
+    if (!closedNotificationsContainer || !closedNotificationsAckUrl) {
+      return;
+    }
+    fetch(closedNotificationsAckUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "X-CSRFToken": getCookie("csrftoken"),
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    })
+      .then(() => {
+        closedNotificationsContainer.remove();
+      })
+      .catch((error) => {
+        console.error("Falha ao reconhecer notificacoes de encerramento", error);
+      });
+  };
+
+  if (closeNotificationsBtn) {
+    closeNotificationsBtn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      acknowledgeClosedNotifications();
+    });
+  }
 
   const setFeedback = (text = "", isError = false) => {
     if (!feedback) {
@@ -170,10 +238,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const loadOperations = () => {
     if (!container || !dataUrl) {
-      return;
+      scheduleOperationsReload();
+      return Promise.resolve();
     }
     renderLoading();
-    fetch(dataUrl, {
+    return fetch(dataUrl, {
       headers: {
         "X-Requested-With": "XMLHttpRequest",
       },
@@ -198,7 +267,22 @@ document.addEventListener("DOMContentLoaded", () => {
       })
       .catch(() => {
         renderLoadError();
+      })
+      .finally(() => {
+        scheduleOperationsReload();
       });
+  };
+
+  const scheduleOperationsReload = () => {
+    if (!dataUrl) {
+      return;
+    }
+    if (operationsTimer) {
+      clearTimeout(operationsTimer);
+    }
+    operationsTimer = setTimeout(() => {
+      loadOperations();
+    }, OPERATIONS_POLL_MS);
   };
 
   const refreshLiveQuotes = () => {

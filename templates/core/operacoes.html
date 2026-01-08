@@ -472,18 +472,6 @@
               </dd>
             </dl>
 
-            <div class="form-check form-switch mb-2">
-              {% if form %}
-                {{ form.is_real }}
-                <label class="form-check-label small" for="{{ form.is_real.id_for_label }}">
-                  Conta real (desmarcado = simulação)
-                </label>
-              {% else %}
-                <input class="form-check-input" type="checkbox" id="realSwitch" name="is_real" value="1">
-                <label class="form-check-label small" for="realSwitch">Conta real (desmarcado = simulação)</label>
-              {% endif %}
-            </div>
-
             <button type="button"
                     class="btn btn-success mt-auto"
                     id="startTicketBtn"

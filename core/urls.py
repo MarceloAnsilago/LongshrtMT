@@ -23,6 +23,11 @@ urlpatterns = [
         login_required(views.refresh_operation_metrics),
         name="refresh_operation_metrics",
     ),
+    path(
+        "home/closed/ack/",
+        login_required(views.acknowledge_closed_operations),
+        name="ack_closed_operations",
+    ),
     path("pares/", login_required(views.stub_page), {"page": "Pares"}, name="pares"),
     path("analise/", login_required(views.stub_page), {"page": "Analise"}, name="analise"),
     path("operacoes/", views.operacoes, name="operacoes"),
