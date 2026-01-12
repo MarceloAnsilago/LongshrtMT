@@ -11,11 +11,20 @@
 
       <div class="d-flex gap-2">
         <!-- BOTÃO COM SPINNER -->
-        <a id="btnUpdate" class="btn btn-outline-primary" href="{% url 'cotacoes:update' %}">
+        <a id="btnUpdate" class="btn btn-outline-primary" href="{% url 'cotacoes:update' %}"
+           data-update-url="{% url 'cotacoes:update_ajax' %}"
+           data-progress-url="{% url 'cotacoes:progress' %}">
           <span class="spinner-border spinner-border-sm me-2 d-none" id="spUpdate" role="status" aria-hidden="true"></span>
           <i class="bi bi-arrow-clockwise" id="icoUpdate"></i>
-          <span id="txtUpdate">Atualizar Cotações</span>
+          <span id="txtUpdate">Atualizar Cotacoes</span>
         </a>
+        <div id="quotesProgressWrap" class="d-none align-self-center" style="min-width:220px;">
+          <div class="progress" style="height:8px;">
+            <div id="quotesProgressBar" class="progress-bar" role="progressbar"
+                 style="width:0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+          </div>
+          <div id="quotesProgressLabel" class="small text-muted mt-1"></div>
+        </div>
 
         <a class="btn btn-outline-info" href="{% url 'cotacoes:pivot' %}">
           <i class="bi bi-layout-three-columns"></i> Tabela dinâmica (tela cheia)
@@ -213,15 +222,114 @@ document.addEventListener('DOMContentLoaded', function () {
   const sp  = document.getElementById('spUpdate');
   const ico = document.getElementById('icoUpdate');
   const txt = document.getElementById('txtUpdate');
+  const progressWrap = document.getElementById('quotesProgressWrap');
+  const progressBar = document.getElementById('quotesProgressBar');
+  const progressLabel = document.getElementById('quotesProgressLabel');
+  const updateUrl = btn.dataset.updateUrl;
+  const progressUrl = btn.dataset.progressUrl;
 
-  btn.addEventListener('click', function () {
-    // mostra spinner e desabilita botão imediatamente
+  let polling = null;
+  let isRunning = false;
+
+  const stopPolling = () => {
+    if (polling) {
+      clearInterval(polling);
+      polling = null;
+    }
+  };
+
+  const finishUpdate = (message) => {
+    if (sp) sp.classList.add('d-none');
+    if (ico) ico.classList.remove('d-none');
+    if (txt && message) txt.textContent = message;
+    btn.classList.remove('disabled');
+    btn.removeAttribute('aria-disabled');
+    isRunning = false;
+  };
+
+  const getCookie = (name) => {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return '';
+  };
+
+  const setProgress = (data) => {
+    const total = Number(data.total || 0);
+    const index = Number(data.index || 0);
+    const rows = Number(data.rows || 0);
+    const pct = total > 0 ? Math.min(100, Math.round((index / total) * 100)) : 0;
+    if (progressBar) {
+      progressBar.style.width = `${pct}%`;
+      progressBar.setAttribute('aria-valuenow', String(pct));
+    }
+    if (progressLabel) {
+      const ticker = data.ticker ? ` ${data.ticker}` : '';
+      const status = data.status ? data.status : 'processing';
+      progressLabel.textContent = `${status}${ticker} (${index}/${total}) rows=${rows}`;
+    }
+    return data.status === 'done';
+  };
+
+  const startPolling = () => {
+    if (!progressUrl) return;
+    const poll = () => {
+      fetch(progressUrl, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then((resp) => (resp.ok ? resp.json() : {}))
+        .then((data) => {
+          const done = setProgress(data || {});
+          if (done) {
+            stopPolling();
+            if (progressLabel) progressLabel.textContent = 'Concluido.';
+            finishUpdate('Atualizado');
+          }
+        })
+        .catch(() => {});
+    };
+    poll();
+    polling = setInterval(poll, 800);
+  };
+
+  btn.addEventListener('click', function (event) {
+    if (!updateUrl || !progressUrl) return;
+    event.preventDefault();
+    if (isRunning) return;
+    isRunning = true;
+
+    // mostra spinner e desabilita botao imediatamente
     sp.classList.remove('d-none');
     if (ico) ico.classList.add('d-none');
     if (txt) txt.textContent = 'Atualizando...';
     btn.classList.add('disabled');
     btn.setAttribute('aria-disabled', 'true');
-  }, { passive: true });
+    if (progressWrap) progressWrap.classList.remove('d-none');
+    if (progressBar) {
+      progressBar.style.width = '0%';
+      progressBar.setAttribute('aria-valuenow', '0');
+    }
+    if (progressLabel) progressLabel.textContent = '';
+
+    startPolling();
+    fetch(updateUrl, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'X-CSRFToken': getCookie('csrftoken'),
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    })
+      .then((resp) => (resp.ok ? resp.json() : Promise.reject(new Error('request_failed'))))
+      .then((data) => {
+        if (!data || !data.ok) {
+          throw new Error('update_failed');
+        }
+      })
+      .catch(() => {
+        stopPolling();
+        finishUpdate('Falha');
+        if (progressLabel) progressLabel.textContent = 'Falha ao atualizar.';
+      });
+  }, { passive: false });
 });
 </script>
 <script>
