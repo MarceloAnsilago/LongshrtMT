@@ -26,6 +26,7 @@ INTRADAY_TIMEFRAME = 5  # M5
 INTRADAY_BARS = 1
 DAILY_TIMEFRAME = 1440  # D1
 BULK_BATCH_SIZE = 1000
+MAX_QUOTES_PER_ASSET = 220
 
 
 def _normalize_symbol(value: str | None) -> Optional[str]:
@@ -109,6 +110,18 @@ def _upsert_intraday_quote(asset, quote_date, price: float) -> bool:
         obj.is_provisional = True
         obj.save(update_fields=["close", "is_provisional"])
     return created
+
+
+def _prune_old_quotes(asset, *, max_rows: int = MAX_QUOTES_PER_ASSET) -> int:
+    ids = list(
+        QuoteDaily.objects.filter(asset=asset)
+        .order_by('-date')
+        .values_list('id', flat=True)[max_rows:]
+    )
+    if not ids:
+        return 0
+    deleted, _ = QuoteDaily.objects.filter(id__in=ids).delete()
+    return deleted
 
 
 def bulk_update_quotes(
@@ -207,6 +220,13 @@ def bulk_update_quotes(
                 _log_missing_quote(asset, "mt5_error", str(exc))
                 if progress_cb:
                     progress_cb(symbol, idx, total_assets, "error", 0)
+            finally:
+                try:
+                    deleted = _prune_old_quotes(asset)
+                    if deleted:
+                        logger.info("Pruned %s old quotes for %s", deleted, symbol)
+                except Exception:
+                    logger.exception("Failed pruning quotes for %s", symbol)
     finally:
         _flush_bulk()
 
