@@ -145,6 +145,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const OPERATIONS_POLL_MS = 15000;
   let operationsTimer;
   let hasLoadedOperations = false;
+  const isPageVisible = () => document.visibilityState === "visible";
 
   const getCookie = (name) => {
     const match = document.cookie.match(new RegExp("(^|;)\\s*" + name + "=([^;]+)"));
@@ -285,6 +286,10 @@ document.addEventListener("DOMContentLoaded", () => {
       clearTimeout(operationsTimer);
     }
     operationsTimer = setTimeout(() => {
+      if (!isPageVisible()) {
+        scheduleOperationsReload();
+        return;
+      }
       loadOperations();
     }, OPERATIONS_POLL_MS);
   };
@@ -376,7 +381,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const liveUrl = "{{ home_live_url|default:'' }}";
   const livePollMs = 12000;
-  const LIVE_AUTO_REFRESH_MS = 5 * 60 * 1000;
+  const LIVE_AUTO_REFRESH_MS = livePollMs;
   let lastLiveRefresh = 0;
   let liveTimer;
 
@@ -537,6 +542,10 @@ document.addEventListener("DOMContentLoaded", () => {
       clearTimeout(liveTimer);
     }
     liveTimer = setTimeout(() => {
+      if (!isPageVisible()) {
+        scheduleLiveUpdate();
+        return;
+      }
       const shouldRefresh = refreshUrl && Date.now() - lastLiveRefresh >= LIVE_AUTO_REFRESH_MS;
       const updater = shouldRefresh ? refreshLiveQuotesSilent() : fetchLiveCards();
       updater.finally(scheduleLiveUpdate);

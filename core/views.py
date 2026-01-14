@@ -130,7 +130,7 @@ def _build_home_operations_payload(request):
             localized = timezone.localtime(dt_value)
         except Exception:
             localized = dt_value
-        return localized.strftime("%d/%m %H:%M")
+        return localized.strftime("%d/%m %H:%M:%S")
 
     def _format_days_open(dt_value):
         if not dt_value:
@@ -1012,7 +1012,7 @@ def _format_detail_updated(dt_value) -> str:
     except Exception:
         localized = dt_value
     try:
-        return localized.strftime("%d/%m %H:%M")
+        return localized.strftime("%d/%m %H:%M:%S")
     except Exception:
         return ""
 
