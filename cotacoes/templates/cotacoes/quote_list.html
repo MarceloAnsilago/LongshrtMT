@@ -279,9 +279,11 @@ document.addEventListener('DOMContentLoaded', function () {
         .then((data) => {
           const done = setProgress(data || {});
           if (done) {
+            const deleted = Number(data.deleted || 0);
+            const deletedLabel = deleted ? ` Removidas=${deleted}` : '';
             stopPolling();
-            if (progressLabel) progressLabel.textContent = 'Concluido.';
-            finishUpdate('Atualizado');
+            if (progressLabel) progressLabel.textContent = `Concluido.${deletedLabel}`;
+            finishUpdate(deleted ? `Atualizado (${deleted} excluidas)` : 'Atualizado');
           }
         })
         .catch(() => {});

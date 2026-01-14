@@ -124,11 +124,30 @@ class QuoteDailyListView(LoginRequiredMixin, ListView):
     paginate_by = 100
 
 
+def _prune_quotes_over_limit(assets, *, max_rows: int = 210) -> int:
+    total_deleted = 0
+    for asset in assets:
+        ids = list(
+            QuoteDaily.objects.filter(asset=asset)
+            .order_by("-date")
+            .values_list("id", flat=True)[max_rows:]
+        )
+        if not ids:
+            continue
+        deleted, _ = QuoteDaily.objects.filter(id__in=ids).delete()
+        total_deleted += deleted
+    return total_deleted
+
+
 @login_required
 def update_quotes(request: HttpRequest):
-    assets = Asset.objects.filter(is_active=True).order_by("id")
+    assets = list(Asset.objects.filter(is_active=True).order_by("id"))
     n_assets, n_rows = bulk_update_quotes(assets, period="2y", interval="1d")
-    messages.success(request, f"Cotações atualizadas: {n_assets} ativos, {n_rows} linhas inseridas.")
+    deleted = _prune_quotes_over_limit(assets, max_rows=210)
+    messages.success(
+        request,
+        f"Cota??es atualizadas: {n_assets} ativos, {n_rows} linhas inseridas, {deleted} removidas.",
+    )
     return redirect(reverse_lazy("cotacoes:home"))
 
 def quotes_pivot(request: HttpRequest):
@@ -171,16 +190,29 @@ def quotes_progress(request: HttpRequest):
 @login_required
 @require_POST
 def update_quotes_ajax(request: HttpRequest):
-    assets = Asset.objects.filter(is_active=True).order_by("id")
+    assets = list(Asset.objects.filter(is_active=True).order_by("id"))
 
     def progress_cb(sym: str, idx: int, total: int, status: str, rows: int):
         _progress_set(request.user.id, ticker=sym, index=idx, total=total, status=status, rows=rows)
 
-    _progress_set(request.user.id, ticker="", index=0, total=assets.count(), status="starting", rows=0)
+    total_assets = len(assets)
+    _progress_set(request.user.id, ticker="", index=0, total=total_assets, status="starting", rows=0)
     n_assets, n_rows = bulk_update_quotes(assets, period="2y", interval="1d", progress_cb=progress_cb)
-    messages.success(request, f"Cotações atualizadas: {n_assets} ativos, {n_rows} linhas inseridas.")
-    _progress_set(request.user.id, ticker="", index=n_assets, total=assets.count(), status="done", rows=n_rows)
-    return JsonResponse({"ok": True, "assets": n_assets, "rows": n_rows})
+    deleted = _prune_quotes_over_limit(assets, max_rows=210)
+    messages.success(
+        request,
+        f"Cota??es atualizadas: {n_assets} ativos, {n_rows} linhas inseridas, {deleted} removidas.",
+    )
+    _progress_set(
+        request.user.id,
+        ticker="",
+        index=n_assets,
+        total=total_assets,
+        status="done",
+        rows=n_rows,
+        deleted=deleted,
+    )
+    return JsonResponse({"ok": True, "assets": n_assets, "rows": n_rows, "deleted": deleted})
 
 
 @login_required
