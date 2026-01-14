@@ -144,6 +144,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let metricsUrl = metricsBtn?.dataset?.url;
   const OPERATIONS_POLL_MS = 15000;
   let operationsTimer;
+  let hasLoadedOperations = false;
 
   const getCookie = (name) => {
     const match = document.cookie.match(new RegExp("(^|;)\\s*" + name + "=([^;]+)"));
@@ -241,7 +242,9 @@ document.addEventListener("DOMContentLoaded", () => {
       scheduleOperationsReload();
       return Promise.resolve();
     }
-    renderLoading();
+    if (!hasLoadedOperations) {
+      renderLoading();
+    }
     return fetch(dataUrl, {
       headers: {
         "X-Requested-With": "XMLHttpRequest",
@@ -257,6 +260,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .then((payload) => {
           if (payload && payload.html) {
             container.innerHTML = payload.html;
+            hasLoadedOperations = true;
             attachAlertRefresh();
             if (liveUrl) {
               fetchLiveCards();
@@ -312,6 +316,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!data.ok) {
           throw new Error(data.detail || "Resposta invalida.");
         }
+        lastLiveRefresh = Date.now();
         setFeedback(`Cotações atualizadas: ${data.updated}/${data.total}`, false);
         loadOperations();
       })
@@ -371,6 +376,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const liveUrl = "{{ home_live_url|default:'' }}";
   const livePollMs = 12000;
+  const LIVE_AUTO_REFRESH_MS = 5 * 60 * 1000;
+  let lastLiveRefresh = 0;
   let liveTimer;
 
   const applyLiveFlash = (el) => {
@@ -491,6 +498,37 @@ document.addEventListener("DOMContentLoaded", () => {
       });
   };
 
+  const refreshLiveQuotesSilent = () => {
+    if (!refreshUrl) {
+      return Promise.resolve();
+    }
+    const startedAt = Date.now();
+    return fetch(refreshUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "X-CSRFToken": getCookie("csrftoken"),
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("Falha ao atualizar cotações.");
+        }
+        return response.json();
+      })
+      .then((data) => {
+        if (!data.ok) {
+          throw new Error(data.detail || "Resposta invalida.");
+        }
+        lastLiveRefresh = startedAt;
+        return fetchLiveCards();
+      })
+      .catch((error) => {
+        console.error("Falha ao atualizar cotações automaticamente", error);
+      });
+  };
+
   const scheduleLiveUpdate = () => {
     if (!liveUrl) {
       return;
@@ -499,7 +537,9 @@ document.addEventListener("DOMContentLoaded", () => {
       clearTimeout(liveTimer);
     }
     liveTimer = setTimeout(() => {
-      fetchLiveCards().finally(scheduleLiveUpdate);
+      const shouldRefresh = refreshUrl && Date.now() - lastLiveRefresh >= LIVE_AUTO_REFRESH_MS;
+      const updater = shouldRefresh ? refreshLiveQuotesSilent() : fetchLiveCards();
+      updater.finally(scheduleLiveUpdate);
     }, livePollMs);
   };
 
