@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+from datetime import datetime, timezone as dt_timezone
 import re
 import threading
 import time
@@ -20,13 +21,16 @@ from django.urls import reverse
 from django.utils.safestring import mark_safe
 from django.utils import timezone
 from django.utils.timezone import now
+from django.conf import settings
 from django.views.decorators.http import require_GET, require_POST
 
 from acoes.models import Asset
+from cotacoes.models import QuoteDaily
 from longshort.services.metrics import (
     get_pair_timeseries_and_metrics,
     get_zscore_series,
 )
+from mt5_bridge_client.mt5client import MT5BridgeError, fetch_rates
 from operacoes.models import Operation
 from .constants import DEFAULT_BASE_WINDOW, DEFAULT_BETA_WINDOW, DEFAULT_WINDOWS
 from .models import Pair, UserMetricsConfig
@@ -685,3 +689,137 @@ def analysis_zseries(request: HttpRequest) -> HttpResponse:
         "generated_at": now(),
     }
     return render(request, "pairs/_analysis_panel.html", context)
+
+
+def analysis_prices(request: HttpRequest) -> HttpResponse:
+    config = _get_user_metrics_config(request.user)
+    pair, window, _ = _resolve_context(request, config)
+
+    top_asset = pair.left
+    bottom_asset = pair.right
+    top_entry_price = None
+    bottom_entry_price = None
+    entry_date = None
+    op_filters = (
+        Q(left_asset=pair.left, right_asset=pair.right)
+        | Q(left_asset=pair.right, right_asset=pair.left)
+        | Q(pair=pair)
+    )
+    latest_op = (
+        Operation.objects.select_related("sell_asset", "buy_asset")
+        .filter(user=request.user, status=Operation.STATUS_OPEN)
+        .filter(op_filters)
+        .order_by("-opened_at")
+        .first()
+    )
+    if latest_op:
+        top_asset = latest_op.sell_asset
+        bottom_asset = latest_op.buy_asset
+        top_entry_price = latest_op.sell_price
+        bottom_entry_price = latest_op.buy_price
+        if latest_op.operation_date:
+            entry_date = latest_op.operation_date
+        elif latest_op.opened_at:
+            try:
+                entry_date = timezone.localtime(latest_op.opened_at).date()
+            except Exception:
+                entry_date = None
+
+    def _fmt_money(value) -> str:
+        if value is None:
+            return "--"
+        try:
+            raw = f"{float(value):,.2f}"
+        except (TypeError, ValueError):
+            return "--"
+        raw = raw.replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"R$ {raw}"
+
+    def _update_ohlc_from_mt5(asset: Asset, count: int) -> int:
+        bars = fetch_rates(asset.ticker, "D1", max(1, int(count or 1)))
+        if not bars:
+            return 0
+        updated = 0
+        for bar in bars:
+            try:
+                ts = int(bar.get("time"))
+                bar_date = datetime.fromtimestamp(ts, tz=dt_timezone.utc).date()
+            except Exception:
+                continue
+            if bar.get("close") is None:
+                continue
+            defaults = {
+                "open": bar.get("open"),
+                "high": bar.get("high"),
+                "low": bar.get("low"),
+                "close": bar.get("close"),
+                "is_provisional": False,
+            }
+            QuoteDaily.objects.update_or_create(
+                asset=asset,
+                date=bar_date,
+                defaults=defaults,
+            )
+            updated += 1
+        return updated
+
+    mt5_error = ""
+    refreshed = False
+    if not getattr(settings, "MT5_BRIDGE_URL", ""):
+        mt5_error = "MT5_BRIDGE_URL nao configurado."
+    else:
+        try:
+            _update_ohlc_from_mt5(top_asset, window)
+            _update_ohlc_from_mt5(bottom_asset, window)
+            refreshed = True
+        except MT5BridgeError as exc:
+            mt5_error = str(exc)
+
+    def _build_price_series(asset: Asset, max_rows: int) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        rows = list(
+            QuoteDaily.objects.filter(asset=asset)
+            .order_by("-date")[: max_rows or 0]
+        )
+        rows.reverse()
+        line = []
+        candles = []
+        for row in rows:
+            if row.close is not None:
+                line.append({"time": row.date.isoformat(), "value": float(row.close)})
+            if row.open is not None and row.high is not None and row.low is not None and row.close is not None:
+                candles.append(
+                    {
+                        "time": row.date.isoformat(),
+                        "open": float(row.open),
+                        "high": float(row.high),
+                        "low": float(row.low),
+                        "close": float(row.close),
+                    }
+                )
+        return line, candles
+
+    left_series, left_candles = _build_price_series(top_asset, window)
+    right_series, right_candles = _build_price_series(bottom_asset, window)
+    candles_ready = bool(left_candles) and bool(right_candles)
+
+    context = {
+        "pair": pair,
+        "pair_label": f"{pair.left.ticker} x {pair.right.ticker}",
+        "window": window,
+        "left_label": top_asset.ticker,
+        "right_label": bottom_asset.ticker,
+        "left_series_json": json.dumps(left_series),
+        "right_series_json": json.dumps(right_series),
+        "left_candles_json": json.dumps(left_candles),
+        "right_candles_json": json.dumps(right_candles),
+        "left_entry_price_json": json.dumps(float(top_entry_price)) if top_entry_price is not None else "null",
+        "right_entry_price_json": json.dumps(float(bottom_entry_price)) if bottom_entry_price is not None else "null",
+        "left_entry_label": _fmt_money(top_entry_price),
+        "right_entry_label": _fmt_money(bottom_entry_price),
+        "entry_date_json": json.dumps(entry_date.isoformat()) if entry_date else "null",
+        "candles_ready": candles_ready,
+        "mt5_error": mt5_error,
+        "mt5_refreshed": refreshed,
+        "current": "analise",
+    }
+    return render(request, "pairs/analysis_prices.html", context)

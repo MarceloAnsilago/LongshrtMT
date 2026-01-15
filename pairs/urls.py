@@ -19,4 +19,5 @@ urlpatterns = [
     path("analise/", views.analysis_entry, name="analysis"),
     path("analise/metrics/", views.analysis_metrics, name="analysis_metrics"),  # HTMX
     path("analise/zseries/", views.analysis_zseries, name="analysis_zseries"),  # HTMX
+    path("analise/graficos/", views.analysis_prices, name="analysis_prices"),
 ]

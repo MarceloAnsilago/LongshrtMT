@@ -37,6 +37,11 @@
             Atualizar grafico
           </button>
           <a class="btn btn-outline-secondary btn-sm"
+             id="viewChartsBtn"
+             data-base-url="{% url 'pairs:analysis_prices' %}">
+            Ver graficos
+          </a>
+          <a class="btn btn-outline-secondary btn-sm"
              id="startOperationBtn"
              data-base-url="{% url 'core:operacoes' %}"
              data-source="analysis"
@@ -114,6 +119,44 @@
       const base = baseUrl.endsWith("?") ? baseUrl.slice(0, -1) : baseUrl;
       const qs = params.toString();
       btn.href = qs ? `${base}?${qs}` : base;
+    };
+
+    if (selectEl) {
+      selectEl.addEventListener("change", buildHref);
+    }
+    buildHref();
+  })();
+</script>
+
+<script>
+  (function () {
+    const btn = document.getElementById("viewChartsBtn");
+    if (!btn) {
+      return;
+    }
+    const selectEl = document.getElementById("selWindow");
+    const baseUrl = btn.dataset.baseUrl || "{% url 'pairs:analysis_prices' %}";
+    const pairId = "{{ pair.pk|default:'' }}";
+    const leftTicker = "{{ pair.left.ticker }}";
+    const rightTicker = "{{ pair.right.ticker }}";
+
+    const buildHref = () => {
+      const params = new URLSearchParams();
+      if (selectEl && selectEl.value) {
+        params.set("window", selectEl.value);
+      }
+      if (pairId) {
+        params.set("pair", pairId);
+      } else {
+        if (leftTicker) {
+          params.set("left", leftTicker);
+        }
+        if (rightTicker) {
+          params.set("right", rightTicker);
+        }
+      }
+      const qs = params.toString();
+      btn.href = qs ? `${baseUrl}?${qs}` : baseUrl;
     };
 
     if (selectEl) {

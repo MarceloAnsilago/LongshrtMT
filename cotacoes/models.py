@@ -7,6 +7,9 @@ from acoes.models import Asset
 class QuoteDaily(models.Model):
     asset = models.ForeignKey("acoes.Asset", on_delete=models.CASCADE, related_name="quotes")
     date = models.DateField()
+    open = models.FloatField(null=True, blank=True)
+    high = models.FloatField(null=True, blank=True)
+    low = models.FloatField(null=True, blank=True)
     close = models.FloatField()
     is_provisional = models.BooleanField(default=False)
 

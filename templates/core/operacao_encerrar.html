@@ -51,9 +51,22 @@
               {% if current_prices.buy.source_label %}({{ current_prices.buy.source_label }}){% endif %}
             </span>
           </span>
-          <button type="button" id="refreshDetailBtn" class="btn btn-sm btn-outline-primary ms-auto">
-            Atualizar agora
-          </button>
+          <div class="ms-auto d-flex gap-2">
+            {% if operation.pair %}
+              <a class="btn btn-sm btn-outline-secondary"
+                 href="{% url 'pairs:analysis_prices' %}?pair={{ operation.pair.pk }}&window={{ window }}">
+                Ver graficos
+              </a>
+            {% else %}
+              <a class="btn btn-sm btn-outline-secondary"
+                 href="{% url 'pairs:analysis_prices' %}?left={{ operation.left_asset.ticker }}&right={{ operation.right_asset.ticker }}&window={{ window }}">
+                Ver graficos
+              </a>
+            {% endif %}
+            <button type="button" id="refreshDetailBtn" class="btn btn-sm btn-outline-primary">
+              Atualizar agora
+            </button>
+          </div>
         </div>
 
         <div class="row row-cols-1 row-cols-md-3 g-3">

@@ -49,6 +49,11 @@ def fetch_last_close_d1(symbol: str) -> Optional[float]:
     return float(close) if close is not None else None
 
 
+def fetch_rates(symbol: str, timeframe: str = "D1", count: int = 1) -> list[Dict[str, Any]]:
+    payload = {"symbol": symbol, "timeframe": timeframe, "count": count}
+    return _request("POST", "/api/rates", json=payload).get("rates", [])
+
+
 def execute_trades(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
     payload = {"trades": trades}
     return _request("POST", "/api/trades", json=payload).get("trades", [])
