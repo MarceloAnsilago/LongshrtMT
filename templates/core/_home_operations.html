@@ -459,97 +459,73 @@
                 <!-- Resumo financeiro -->
 
                 <div class="card border rounded-3 p-3 small">
+                  <div class="text-uppercase small text-body-tertiary fw-semibold mb-2">Resumo da operacao</div>
 
-                  <div class="row gy-1">
-
-                    <div class="col-6 d-flex justify-content-between">
-
-                      <span class="text-body-tertiary">Capital alocado</span>
-
-                      <span class="fw-semibold">{{ item.capital_label }}</span>
-
-                    </div>
-
-                    <div class="col-6 d-flex justify-content-between">
-
-                      <span class="text-body-tertiary">Saldo entrada</span>
-
-                      <span class="fw-semibold">{{ item.entry.prices.net_label }}</span>
-
-                    </div>
-
-                    {% if item.pnl_summary %}
-                      <div class="col-12">
-                        <div class="small text-body-secondary d-flex flex-wrap gap-3">
-                          <span>Capital total: {{ item.pnl_summary.capital_total_label }}</span>
-                          <span>Lucro Ponta curta: {{ item.pnl_summary.lucro_short_label }}</span>
-                          <span>Lucro Ponta longa: {{ item.pnl_summary.lucro_long_label }}</span>
-                          <span>Lucro total: {{ item.pnl_summary.lucro_total_label }}</span>
-                          <span>Retorno short: {{ item.pnl_summary.retorno_short_label }}</span>
-                          <span>Retorno long: {{ item.pnl_summary.retorno_long_label }}</span>
-                          <span>Retorno total: {{ item.pnl_summary.retorno_total_label }}</span>
-                        </div>
-                      </div>
-                    {% endif %}
-
-                    <div class="col-6 d-flex justify-content-between">
-
-                      <span class="text-body-tertiary">Resultado</span>
-
-                      <span
-                        class="fw-semibold {% if item.pnl_ready %}{% if item.pnl_positive %}text-success{% elif item.pnl_negative %}text-danger{% endif %}{% endif %}"
-                        data-live-field="pl_total_label"
-                        data-op-id="{{ item.operation.pk }}">
-                        {{ item.current.prices.pl_total_label }}
-                      </span>
-
-                    </div>
-
+                  <div class="row gy-2">
                     <div class="col-12">
-                      <div class="text-body-secondary small">
-                        Resultado indica o P/L em relacao aos precos de entrada; o Saldo atual mostrado abaixo eh o caixa que voce teria ao fechar agora com os precos ao vivo.
+                      <div class="d-flex justify-content-between align-items-center">
+                        <span class="text-body-tertiary">Ativo A ({{ item.operation.sell_asset.ticker }})</span>
+                        <span class="small text-danger fw-semibold">Vender</span>
                       </div>
-                    </div>
-
-                    <div class="col-12">
-
-                      {% with final_dir=item.current.prices.final_direction_label %}
-                        <div class="border rounded-3 px-3 py-2 d-flex align-items-center justify-content-between gap-2 bg-body-tertiary">
-
-                          <div class="text-body-secondary small d-flex align-items-center gap-2">
-
-                            <span>Saldo atual</span>
-
-                            <span
-                              class="badge text-capitalize small
-                                {% if final_dir == 'recebe' %}
-                                  bg-primary-subtle text-primary border border-primary
-                                {% elif final_dir == 'paga' %}
-                                  bg-danger-subtle text-danger border border-danger
-                                {% else %}
-                                  bg-secondary-subtle text-secondary border border-body-tertiary
-                                {% endif %}"
-                              data-live-field="final_direction_label"
-                              data-op-id="{{ item.operation.pk }}">
-                              {{ final_dir|default:"--" }}
-                            </span>
-
-                          </div>
-
-                          <div
-                            class="fw-semibold {% if final_dir == 'recebe' %}text-primary{% elif final_dir == 'paga' %}text-danger{% endif %}"
-                            data-live-field="final_label"
+                      <div class="d-flex flex-wrap gap-3 text-body-secondary small">
+                        <span>Preco inicial: {{ item.entry.prices.sell_price_label }}</span>
+                        <span>Preco atual:
+                          <span
+                            class="home-live-field"
+                            data-live-field="sell_price_label"
                             data-op-id="{{ item.operation.pk }}">
-                            {{ item.current.prices.final_label }}
-                          </div>
-
-                        </div>
-                      {% endwith %}
-
+                            {{ item.current.prices.sell_price_label }}
+                          </span>
+                        </span>
+                        <span>Resultado:
+                          <span
+                            class="home-live-field"
+                            data-live-field="sell_pl_label"
+                            data-op-id="{{ item.operation.pk }}">
+                            {{ item.current.prices.sell_pl_label }}
+                          </span>
+                        </span>
+                      </div>
                     </div>
 
-                  </div>
+                    <div class="col-12">
+                      <div class="d-flex justify-content-between align-items-center">
+                        <span class="text-body-tertiary">Ativo B ({{ item.operation.buy_asset.ticker }})</span>
+                        <span class="small text-success fw-semibold">Comprar</span>
+                      </div>
+                      <div class="d-flex flex-wrap gap-3 text-body-secondary small">
+                        <span>Preco inicial: {{ item.entry.prices.buy_price_label }}</span>
+                        <span>Preco atual:
+                          <span
+                            class="home-live-field"
+                            data-live-field="buy_price_label"
+                            data-op-id="{{ item.operation.pk }}">
+                            {{ item.current.prices.buy_price_label }}
+                          </span>
+                        </span>
+                        <span>Resultado:
+                          <span
+                            class="home-live-field"
+                            data-live-field="buy_pl_label"
+                            data-op-id="{{ item.operation.pk }}">
+                            {{ item.current.prices.buy_pl_label }}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
 
+                    <div class="col-12">
+                      <div class="border rounded-3 px-3 py-2 d-flex align-items-center justify-content-between gap-2 bg-body-tertiary">
+                        <span class="text-body-secondary small">Relacao dos resultados (A + B)</span>
+                        <span
+                          class="fw-semibold {% if item.pnl_ready %}{% if item.pnl_positive %}text-success{% elif item.pnl_negative %}text-danger{% endif %}{% endif %}"
+                          data-live-field="pl_total_label"
+                          data-op-id="{{ item.operation.pk }}">
+                          {{ item.current.prices.pl_total_label }}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
               </div>
