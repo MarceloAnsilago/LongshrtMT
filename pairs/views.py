@@ -70,8 +70,9 @@ def _build_existing_operation_info(request: HttpRequest, pair: Pair | None) -> d
     filters = (
         Q(left_asset=left_asset, right_asset=right_asset)
         | Q(left_asset=right_asset, right_asset=left_asset)
-        | Q(pair=pair)
     )
+    if pair.pk:
+        filters |= Q(pair=pair)
     existing_op = (
         Operation.objects.select_related("sell_asset", "buy_asset", "left_asset", "right_asset")
         .filter(user=request.user, status=Operation.STATUS_OPEN)
@@ -703,8 +704,9 @@ def analysis_prices(request: HttpRequest) -> HttpResponse:
     op_filters = (
         Q(left_asset=pair.left, right_asset=pair.right)
         | Q(left_asset=pair.right, right_asset=pair.left)
-        | Q(pair=pair)
     )
+    if pair.pk:
+        op_filters |= Q(pair=pair)
     latest_op = (
         Operation.objects.select_related("sell_asset", "buy_asset")
         .filter(user=request.user, status=Operation.STATUS_OPEN)
