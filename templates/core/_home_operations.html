@@ -548,7 +548,23 @@
 
                     <div class="col-12 mt-2">
                       <div class="border rounded-3 px-3 py-2 d-flex align-items-center justify-content-between gap-2 bg-body-tertiary">
-                        <span class="text-body-secondary small">Relacao dos resultados (A + B)</span>
+                        <span class="text-body-secondary small">
+                          Resultado (
+                          <span
+                            class="home-live-field"
+                            data-live-field="buy_pl_label"
+                            data-op-id="{{ item.operation.pk }}">
+                            {{ item.current.prices.buy_pl_label }}
+                          </span>
+                          +
+                          <span
+                            class="home-live-field"
+                            data-live-field="sell_pl_label"
+                            data-op-id="{{ item.operation.pk }}">
+                            {{ item.current.prices.sell_pl_label }}
+                          </span>
+                          )
+                        </span>
                         <span
                           class="fw-semibold {% if item.pnl_ready %}{% if item.pnl_positive %}text-success{% elif item.pnl_negative %}text-danger{% endif %}{% endif %}"
                           data-live-field="pl_total_label"
