@@ -463,29 +463,37 @@
 
                   <div class="row gy-2">
                     <div class="col-12">
-                      <div class="d-flex justify-content-between align-items-center">
+                      <div class="d-flex justify-content-between align-items-center mb-1">
                         <span class="text-body-tertiary">Ativo B ({{ item.operation.sell_asset.ticker }})</span>
                         <span class="small text-danger fw-semibold">Vendido</span>
                       </div>
-                      <div class="text-body-secondary small">
-                        <div>Qtd {{ item.entry.prices.sell_qty_label }} &bull; Preco inicial {{ item.entry.prices.sell_price_label }} &bull; Total {{ item.entry.prices.sell_total_label }}</div>
-                        <div>
-                          Preco atual
-                          <span
-                            class="home-live-field"
-                            data-live-field="sell_price_label"
-                            data-op-id="{{ item.operation.pk }}">
-                            {{ item.current.prices.sell_price_label }}
+                      <div class="text-body-secondary small d-flex flex-column gap-1">
+                        <div class="ps-1">Qtd {{ item.entry.prices.sell_qty_label }}</div>
+                        <div class="ps-1 d-flex gap-3 flex-wrap">
+                          <span>Preco inicial {{ item.entry.prices.sell_price_label }}</span>
+                          <span>Total {{ item.entry.prices.sell_total_label }}</span>
+                        </div>
+                        <div class="ps-1 d-flex gap-3 flex-wrap">
+                          <span>
+                            Preco atual
+                            <span
+                              class="home-live-field"
+                              data-live-field="sell_price_label"
+                              data-op-id="{{ item.operation.pk }}">
+                              {{ item.current.prices.sell_price_label }}
+                            </span>
                           </span>
-                          &bull; Total
-                          <span
-                            class="home-live-field"
-                            data-live-field="sell_total_label"
-                            data-op-id="{{ item.operation.pk }}">
-                            {{ item.current.prices.sell_total_label }}
+                          <span>
+                            Total
+                            <span
+                              class="home-live-field"
+                              data-live-field="sell_total_label"
+                              data-op-id="{{ item.operation.pk }}">
+                              {{ item.current.prices.sell_total_label }}
+                            </span>
                           </span>
                         </div>
-                        <div>Resultado B:
+                        <div class="ps-1">Resultado B:
                           <span
                             class="home-live-field"
                             data-live-field="sell_pl_label"
@@ -497,29 +505,37 @@
                     </div>
 
                     <div class="col-12">
-                      <div class="d-flex justify-content-between align-items-center">
+                      <div class="d-flex justify-content-between align-items-center mb-1 mt-2">
                         <span class="text-body-tertiary">Ativo A ({{ item.operation.buy_asset.ticker }})</span>
                         <span class="small text-success fw-semibold">Comprado</span>
                       </div>
-                      <div class="text-body-secondary small">
-                        <div>Qtd {{ item.entry.prices.buy_qty_label }} &bull; Preco inicial {{ item.entry.prices.buy_price_label }} &bull; Total {{ item.entry.prices.buy_total_label }}</div>
-                        <div>
-                          Preco atual
-                          <span
-                            class="home-live-field"
-                            data-live-field="buy_price_label"
-                            data-op-id="{{ item.operation.pk }}">
-                            {{ item.current.prices.buy_price_label }}
+                      <div class="text-body-secondary small d-flex flex-column gap-1">
+                        <div class="ps-1">Qtd {{ item.entry.prices.buy_qty_label }}</div>
+                        <div class="ps-1 d-flex gap-3 flex-wrap">
+                          <span>Preco inicial {{ item.entry.prices.buy_price_label }}</span>
+                          <span>Total {{ item.entry.prices.buy_total_label }}</span>
+                        </div>
+                        <div class="ps-1 d-flex gap-3 flex-wrap">
+                          <span>
+                            Preco atual
+                            <span
+                              class="home-live-field"
+                              data-live-field="buy_price_label"
+                              data-op-id="{{ item.operation.pk }}">
+                              {{ item.current.prices.buy_price_label }}
+                            </span>
                           </span>
-                          &bull; Total
-                          <span
-                            class="home-live-field"
-                            data-live-field="buy_total_label"
-                            data-op-id="{{ item.operation.pk }}">
-                            {{ item.current.prices.buy_total_label }}
+                          <span>
+                            Total
+                            <span
+                              class="home-live-field"
+                              data-live-field="buy_total_label"
+                              data-op-id="{{ item.operation.pk }}">
+                              {{ item.current.prices.buy_total_label }}
+                            </span>
                           </span>
                         </div>
-                        <div>Resultado A:
+                        <div class="ps-1">Resultado A:
                           <span
                             class="home-live-field"
                             data-live-field="buy_pl_label"
@@ -530,7 +546,7 @@
                       </div>
                     </div>
 
-                    <div class="col-12">
+                    <div class="col-12 mt-2">
                       <div class="border rounded-3 px-3 py-2 d-flex align-items-center justify-content-between gap-2 bg-body-tertiary">
                         <span class="text-body-secondary small">Relacao dos resultados (A + B)</span>
                         <span
