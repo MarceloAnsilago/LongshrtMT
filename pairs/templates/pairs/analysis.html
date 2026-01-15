@@ -55,6 +55,20 @@
     </div>
   </div>
 
+  {% if existing_operation_info %}
+    <div class="alert alert-warning d-flex flex-column gap-1 small mb-3">
+      <div><strong>Atencao:</strong> {{ existing_operation_info.message }}</div>
+      {% if existing_operation_info.opened_label %}
+        <div class="text-body-secondary">Operacao aberta em {{ existing_operation_info.opened_label }}.</div>
+      {% endif %}
+      <div>
+        <a class="alert-link" href="{{ existing_operation_info.url }}">
+          Ver detalhes da operacao em andamento ({{ existing_operation_info.pair_label }})
+        </a>
+      </div>
+    </div>
+  {% endif %}
+
   <div id="analysisPanel"
        hx-get="{% url 'pairs:analysis_zseries' %}?{{ request.GET.urlencode }}"
        hx-include="#selWindow"

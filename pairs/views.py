@@ -12,10 +12,13 @@ from typing import Any
 
 from django.contrib import messages
 from django.core.cache import cache
+from django.db.models import Q
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.safestring import mark_safe
+from django.utils import timezone
 from django.utils.timezone import now
 from django.views.decorators.http import require_GET, require_POST
 
@@ -24,6 +27,7 @@ from longshort.services.metrics import (
     get_pair_timeseries_and_metrics,
     get_zscore_series,
 )
+from operacoes.models import Operation
 from .constants import DEFAULT_BASE_WINDOW, DEFAULT_BETA_WINDOW, DEFAULT_WINDOWS
 from .models import Pair, UserMetricsConfig
 from .services.scan import build_pairs_base, hunt_pairs_until_found, scan_pair_windows
@@ -52,6 +56,42 @@ def _user_base_window(config: UserMetricsConfig | None) -> int:
 
 def _user_beta_window(config: UserMetricsConfig | None) -> int:
     return config.beta_window if config else DEFAULT_BETA_WINDOW
+
+
+def _build_existing_operation_info(request: HttpRequest, pair: Pair | None) -> dict | None:
+    if not pair or not getattr(request.user, "is_authenticated", False):
+        return None
+    left_asset = pair.left
+    right_asset = pair.right
+    filters = (
+        Q(left_asset=left_asset, right_asset=right_asset)
+        | Q(left_asset=right_asset, right_asset=left_asset)
+        | Q(pair=pair)
+    )
+    existing_op = (
+        Operation.objects.select_related("sell_asset", "buy_asset", "left_asset", "right_asset")
+        .filter(user=request.user, status=Operation.STATUS_OPEN)
+        .filter(filters)
+        .order_by("-opened_at")
+        .first()
+    )
+    if not existing_op:
+        return None
+    opened_label = ""
+    if existing_op.opened_at:
+        try:
+            opened_label = timezone.localtime(existing_op.opened_at).strftime("%d/%m %H:%M")
+        except Exception:
+            opened_label = ""
+    is_inverted = existing_op.left_asset == right_asset and existing_op.right_asset == left_asset
+    pair_label = existing_op.formatted_pair()
+    descriptor = "par invertido" if is_inverted else "mesmo par selecionado"
+    return {
+        "message": f"Ja existe uma operacao em andamento para {pair_label} ({descriptor}). Deseja continuar?",
+        "opened_label": opened_label,
+        "url": reverse("core:operacao_encerrar", args=[existing_op.pk]),
+        "pair_label": pair_label,
+    }
 
 
 _BASE_DISPLAY_METRICS = (
@@ -516,12 +556,14 @@ def analysis_entry(request: HttpRequest) -> HttpResponse:
     windows = _user_windows(config)
     try:
         pair, window, source = _resolve_context(request, config)
+        existing_operation_info = _build_existing_operation_info(request, pair)
         context = {
             "pair": pair,
             "window": window,
             "windows": windows,
             "source": source,
             "current": "analise",
+            "existing_operation_info": existing_operation_info,
         }
         return render(request, "pairs/analysis.html", context)
     except Http404:
