@@ -284,6 +284,9 @@ document.addEventListener('DOMContentLoaded', function () {
             stopPolling();
             if (progressLabel) progressLabel.textContent = `Concluido.${deletedLabel}`;
             finishUpdate(deleted ? `Atualizado (${deleted} excluidas)` : 'Atualizado');
+            setTimeout(() => {
+              window.location.reload();
+            }, 600);
           }
         })
         .catch(() => {});
