@@ -2040,6 +2040,57 @@ def operacao_encerrar(request, pk: int):
             operation.delete()
             messages.success(request, f"Operacao {pair_label} excluida com sucesso.")
             return redirect("core:home")
+        if action == "update_entry":
+            errors = []
+
+            def parse_price(field: str, label: str) -> Decimal | None:
+                raw = request.POST.get(field)
+                if raw is None:
+                    errors.append(f"{label} nao informado.")
+                    return None
+                try:
+                    value = Decimal(str(raw).replace(",", ".").strip())
+                except Exception:
+                    errors.append(f"{label} invalido.")
+                    return None
+                if value <= 0:
+                    errors.append(f"{label} precisa ser maior que zero.")
+                    return None
+                return value
+
+            sell_price = parse_price("sell_price", "Preco de venda")
+            buy_price = parse_price("buy_price", "Preco de compra")
+
+            if errors:
+                for error in errors:
+                    messages.error(request, error)
+                return redirect("core:operacao_encerrar", pk=operation.pk)
+
+            price_quant = Decimal("0.000001")
+            money_quant = Decimal("0.01")
+            sell_price = sell_price.quantize(price_quant)
+            buy_price = buy_price.quantize(price_quant)
+            sell_qty_dec = Decimal(operation.sell_quantity)
+            buy_qty_dec = Decimal(operation.buy_quantity)
+            sell_value = (sell_price * sell_qty_dec).quantize(money_quant)
+            buy_value = (buy_price * buy_qty_dec).quantize(money_quant)
+            net_value = (sell_value - buy_value).quantize(money_quant)
+
+            operation.sell_price = sell_price
+            operation.buy_price = buy_price
+            operation.sell_value = sell_value
+            operation.buy_value = buy_value
+            operation.net_value = net_value
+            operation.save(update_fields=[
+                "sell_price",
+                "buy_price",
+                "sell_value",
+                "buy_value",
+                "net_value",
+                "updated_at",
+            ])
+            messages.success(request, "Precos de entrada atualizados.")
+            return redirect("core:operacao_encerrar", pk=operation.pk)
         if action == "close":
             auto_close_triggered = request.POST.get("auto_close_triggered") == "1"
             operation.status = Operation.STATUS_CLOSED

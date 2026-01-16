@@ -337,10 +337,21 @@ def _date_to_unix(value: date) -> int:
     return int(datetime(value.year, value.month, value.day).timestamp())
 
 
-def scan_all_assets_and_fix(*, use_stooq: bool = False, since_months: int | None = 18) -> list[dict]:
+def scan_all_assets_and_fix(
+    *,
+    use_stooq: bool = False,
+    since_months: int | None = 18,
+    progress_cb: ProgressCB = None,
+) -> list[dict]:
     assets = Asset.objects.filter(is_active=True).order_by("ticker")
     results: list[dict] = []
+    total = assets.count()
+    if progress_cb:
+        progress_cb("start", 0, total, "starting", 0)
     for asset in assets:
+        idx = len(results) + 1
+        if progress_cb:
+            progress_cb(asset.ticker, idx, total, "processing", 0)
         missing = find_missing_dates_for_asset(asset, since_months=since_months)
         missing_before = len(missing)
         fixed = 0
@@ -348,12 +359,19 @@ def scan_all_assets_and_fix(*, use_stooq: bool = False, since_months: int | None
         symbol = _mt5_symbol_for_asset(asset)
         if not symbol:
             remaining = [day.isoformat() for day in missing]
+            if progress_cb:
+                progress_cb(asset.ticker, idx, total, "no_symbol", 0)
         elif missing:
             for day in missing:
                 if _try_fetch_single_date_internal(asset, symbol, day):
                     fixed += 1
                 else:
                     remaining.append(day.isoformat())
+            if progress_cb:
+                progress_cb(asset.ticker, idx, total, "ok", fixed)
+        else:
+            if progress_cb:
+                progress_cb(asset.ticker, idx, total, "up_to_date", 0)
         results.append(
             {
                 "ticker": asset.ticker,
@@ -362,4 +380,6 @@ def scan_all_assets_and_fix(*, use_stooq: bool = False, since_months: int | None
                 "remaining": remaining,
             }
         )
+    if progress_cb:
+        progress_cb("done", total, total, "done", sum(r["fixed"] for r in results))
     return results

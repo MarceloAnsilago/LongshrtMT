@@ -5,7 +5,7 @@ from .views import (
     QuotesHomeView, update_quotes, quotes_pivot,
     clear_logs, quotes_progress, update_quotes_ajax,
     update_live_quotes_view,
-    faltantes_home, faltantes_scan,
+    faltantes_home, faltantes_scan, faltantes_scan_ajax, faltantes_progress,
     faltantes_detail, faltantes_fetch_one, faltantes_insert_one,
 )
 
@@ -23,6 +23,8 @@ urlpatterns = [
     # Faltantes - lista e scanner
     path("faltantes/", faltantes_home, name="faltantes_home"),
     path("faltantes/scan/", faltantes_scan, name="faltantes_scan"),
+    path("faltantes/scan-ajax/", faltantes_scan_ajax, name="faltantes_scan_ajax"),
+    path("faltantes/progresso/", faltantes_progress, name="faltantes_progress"),
 
     # Faltantes - detalhe por ticker
     path("faltantes/<str:ticker>/", faltantes_detail, name="faltantes_detail"),

@@ -14,6 +14,7 @@ from typing import Any
 from django.contrib import messages
 from django.core.cache import cache
 from django.db.models import Q
+from django.db.utils import OperationalError
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -767,15 +768,19 @@ def analysis_prices(request: HttpRequest) -> HttpResponse:
 
     mt5_error = ""
     refreshed = False
-    if not getattr(settings, "MT5_BRIDGE_URL", ""):
-        mt5_error = "MT5_BRIDGE_URL nao configurado."
-    else:
-        try:
-            _update_ohlc_from_mt5(top_asset, window)
-            _update_ohlc_from_mt5(bottom_asset, window)
-            refreshed = True
-        except MT5BridgeError as exc:
-            mt5_error = str(exc)
+    refresh_requested = request.GET.get("refresh") == "1"
+    if refresh_requested:
+        if not getattr(settings, "MT5_BRIDGE_URL", ""):
+            mt5_error = "MT5_BRIDGE_URL nao configurado."
+        else:
+            try:
+                _update_ohlc_from_mt5(top_asset, window)
+                _update_ohlc_from_mt5(bottom_asset, window)
+                refreshed = True
+            except MT5BridgeError as exc:
+                mt5_error = str(exc)
+            except OperationalError:
+                mt5_error = "Banco ocupado no momento. Tente atualizar novamente."
 
     def _build_price_series(asset: Asset, max_rows: int) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
         rows = list(
@@ -822,6 +827,7 @@ def analysis_prices(request: HttpRequest) -> HttpResponse:
         "candles_ready": candles_ready,
         "mt5_error": mt5_error,
         "mt5_refreshed": refreshed,
+        "refresh_requested": refresh_requested,
         "current": "analise",
     }
     return render(request, "pairs/analysis_prices.html", context)

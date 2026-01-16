@@ -8,16 +8,31 @@
         <h5 class="mb-0">Faltantes</h5>
         <small class="text-muted">Escaneia buracos (dias úteis), tenta corrigir e reporta.</small>
       </div>
-      <form method="post" action="{% url 'cotacoes:faltantes_scan' %}" class="d-flex align-items-center gap-2">
+      <form method="post" action="{% url 'cotacoes:faltantes_scan' %}" class="d-flex align-items-center gap-2" id="faltantesScanForm">
         {% csrf_token %}
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" role="switch" id="useStooq" name="use_stooq">
           <label class="form-check-label small" for="useStooq">Tentar Stooq se Yahoo falhar</label>
         </div>
-        <button class="btn btn-outline-primary" type="submit">
+        <button class="btn btn-outline-primary" type="submit" id="faltantesScanBtn"
+                data-scan-url="{% url 'cotacoes:faltantes_scan_ajax' %}"
+                data-progress-url="{% url 'cotacoes:faltantes_progress' %}">
           <i class="bi bi-search"></i> Escanear e corrigir
         </button>
       </form>
+    </div>
+  </div>
+
+  <div id="faltantesProgressWrap" class="card rounded-3 shadow-sm mb-3 d-none">
+    <div class="card-body">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+        <div class="small text-muted" id="faltantesProgressLabel">Iniciando...</div>
+      </div>
+      <div class="progress" style="height:8px;">
+        <div id="faltantesProgressBar" class="progress-bar" role="progressbar"
+             style="width:0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+      </div>
     </div>
   </div>
 
@@ -73,4 +88,92 @@
     </div>
   {% endif %}
 </main>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const form = document.getElementById('faltantesScanForm');
+  const btn = document.getElementById('faltantesScanBtn');
+  if (!form || !btn) return;
+
+  const progressWrap = document.getElementById('faltantesProgressWrap');
+  const progressBar = document.getElementById('faltantesProgressBar');
+  const progressLabel = document.getElementById('faltantesProgressLabel');
+  const scanUrl = btn.dataset.scanUrl;
+  const progressUrl = btn.dataset.progressUrl;
+  const useStooqEl = document.getElementById('useStooq');
+
+  let polling = null;
+
+  const stopPolling = () => {
+    if (polling) {
+      clearInterval(polling);
+      polling = null;
+    }
+  };
+
+  const setProgress = (data) => {
+    const total = Number(data.total || 0);
+    const index = Number(data.index || 0);
+    const pct = total > 0 ? Math.min(100, Math.round((index / total) * 100)) : 0;
+    if (progressBar) {
+      progressBar.style.width = `${pct}%`;
+      progressBar.setAttribute('aria-valuenow', String(pct));
+    }
+    if (progressLabel) {
+      const ticker = data.ticker ? ` ${data.ticker}` : '';
+      const status = data.status ? data.status : 'processando';
+      progressLabel.textContent = `${status}${ticker} (${index}/${total})`;
+    }
+    return data.status === 'done';
+  };
+
+  const startPolling = () => {
+    if (!progressUrl) return;
+    const poll = () => {
+      fetch(progressUrl, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then((resp) => (resp.ok ? resp.json() : {}))
+        .then((data) => {
+          const done = setProgress(data || {});
+          if (done) {
+            stopPolling();
+            setTimeout(() => {
+              window.location.reload();
+            }, 600);
+          }
+        })
+        .catch(() => {});
+    };
+    poll();
+    polling = setInterval(poll, 900);
+  };
+
+  form.addEventListener('submit', function (event) {
+    if (!scanUrl || !progressUrl) return;
+    event.preventDefault();
+    if (btn) {
+      btn.disabled = true;
+    }
+    if (progressWrap) progressWrap.classList.remove('d-none');
+    if (progressBar) {
+      progressBar.style.width = '0%';
+      progressBar.setAttribute('aria-valuenow', '0');
+    }
+    if (progressLabel) progressLabel.textContent = 'Iniciando...';
+
+    startPolling();
+    const formData = new FormData();
+    if (useStooqEl && useStooqEl.checked) {
+      formData.append('use_stooq', '1');
+    }
+    const csrfInput = form.querySelector('input[name="csrfmiddlewaretoken"]');
+    const csrfToken = csrfInput ? csrfInput.value : '';
+    fetch(scanUrl, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' },
+      body: formData,
+    }).catch(() => {});
+  });
+});
+</script>
 {% endblock %}

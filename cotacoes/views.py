@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import threading
 from urllib.parse import quote_plus
 import pandas as pd
 
@@ -14,6 +15,7 @@ from django.urls import reverse_lazy
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_GET, require_POST
 from django.views.generic import ListView, TemplateView
+from django.db import close_old_connections
 
 from acoes.models import Asset
 from mt5_bridge_client.mt5client import fetch_last_close_d1, MT5BridgeError
@@ -240,9 +242,12 @@ def faltantes_home(request):
     Mostra a página e um botão 'Escanear e corrigir'.
     Se já houver resultados em sessão (última execução), renderiza-os.
     """
+    cached_results = cache.get(FALTANTES_RESULTS_KEY.format(uid=request.user.id)) if request.user.is_authenticated else None
+    if cached_results:
+        cache.delete(FALTANTES_RESULTS_KEY.format(uid=request.user.id))
     ctx = {
         "current": "faltantes",
-        "results": request.session.pop("faltantes_results", None),
+        "results": cached_results or request.session.pop("faltantes_results", None),
     }
     return render(request, "cotacoes/faltantes.html", ctx)
 
@@ -258,6 +263,78 @@ def faltantes_scan(request):
 
     request.session["faltantes_results"] = results
     return redirect("cotacoes:faltantes_home")
+
+
+FALTANTES_PROGRESS_KEY = "faltantes_progress_user_{uid}"
+FALTANTES_RESULTS_KEY = "faltantes_results_user_{uid}"
+
+
+def _faltantes_progress_set(user_id: int, **kwargs):
+    key = FALTANTES_PROGRESS_KEY.format(uid=user_id)
+    payload = {"ts": timezone.now().isoformat(), **kwargs}
+    cache.set(key, payload, timeout=60 * 10)
+
+
+def _faltantes_progress_get(user_id: int):
+    key = FALTANTES_PROGRESS_KEY.format(uid=user_id)
+    return cache.get(key) or {}
+
+
+@require_GET
+@login_required
+def faltantes_progress(request: HttpRequest):
+    return JsonResponse(_faltantes_progress_get(request.user.id))
+
+
+@login_required
+@require_POST
+def faltantes_scan_ajax(request: HttpRequest):
+    use_stooq = bool(request.POST.get("use_stooq"))
+
+    def progress_cb(sym: str, idx: int, total: int, status: str, rows: int):
+        _faltantes_progress_set(
+            request.user.id,
+            ticker=sym,
+            index=idx,
+            total=total,
+            status=status,
+            rows=rows,
+        )
+
+    def worker():
+        close_old_connections()
+        try:
+            results = scan_all_assets_and_fix(
+                use_stooq=use_stooq,
+                since_months=18,
+                progress_cb=progress_cb,
+            )
+            n_fixed = sum(r["fixed"] for r in results)
+            n_remaining = sum(len(r["remaining"]) for r in results)
+            cache.set(FALTANTES_RESULTS_KEY.format(uid=request.user.id), results, timeout=60 * 10)
+            _faltantes_progress_set(
+                request.user.id,
+                ticker="",
+                index=len(results),
+                total=len(results),
+                status="done",
+                rows=n_fixed,
+                remaining=n_remaining,
+            )
+        finally:
+            close_old_connections()
+
+    assets_total = Asset.objects.filter(is_active=True).count()
+    _faltantes_progress_set(
+        request.user.id,
+        ticker="",
+        index=0,
+        total=assets_total,
+        status="starting",
+        rows=0,
+    )
+    threading.Thread(target=worker, daemon=True).start()
+    return JsonResponse({"ok": True})
 
 
 from django.shortcuts import render, redirect, get_object_or_404

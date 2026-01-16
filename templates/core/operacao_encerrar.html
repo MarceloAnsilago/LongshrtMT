@@ -191,6 +191,48 @@
           </div>
         {% endif %}
       </div>
+      <form method="post" class="card border-0 bg-body-tertiary p-3 mt-3">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="update_entry">
+        <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+          <div>
+            <div class="fw-semibold">Preco de entrada</div>
+            <div class="text-body-tertiary small">
+              Ajuste se o preco executado foi diferente da cotacao.
+            </div>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-sm btn-outline-primary">Salvar</button>
+          </div>
+        </div>
+        <div class="row g-2 mt-2">
+          <div class="col-12 col-md-6">
+            <label for="entrySellPrice" class="form-label small text-body-secondary mb-1">
+              Venda ({{ operation.sell_asset.ticker }})
+            </label>
+            <input
+              type="text"
+              id="entrySellPrice"
+              name="sell_price"
+              class="form-control form-control-sm text-end"
+              inputmode="decimal"
+              value="{{ operation.sell_price }}">
+          </div>
+          <div class="col-12 col-md-6">
+            <label for="entryBuyPrice" class="form-label small text-body-secondary mb-1">
+              Compra ({{ operation.buy_asset.ticker }})
+            </label>
+            <input
+              type="text"
+              id="entryBuyPrice"
+              name="buy_price"
+              class="form-control form-control-sm text-end"
+              inputmode="decimal"
+              value="{{ operation.buy_price }}">
+          </div>
+        </div>
+      </form>
+
       <div class="table-responsive mt-3">
         <table class="table table-sm align-middle mb-0">
           <thead>

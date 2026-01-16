@@ -452,9 +452,43 @@
 
       <!-- Estratificação + modo de execução -->
       <div class="col-12 col-xl-4">
-        <div class="card h-100 border-0 bg-body-tertiary">
-          <div class="card-body d-flex flex-column">
-            <h3 class="h6 fw-semibold text-body-secondary mb-3">Estratificação</h3>
+        <div class="d-flex flex-column gap-3 h-100">
+          <div class="card border-0 bg-body-tertiary">
+            <div class="card-body small">
+              <h3 class="h6 fw-semibold text-body-secondary mb-2">Preço de entrada</h3>
+              <p class="text-body-tertiary small mb-2">
+                Ajuste se a execução ocorrer com preço diferente da cotação.
+              </p>
+              <div class="row g-2">
+                <div class="col-6">
+                  <label for="sellEntryPrice" class="form-label small text-body-secondary mb-1">
+                    Venda (short)
+                  </label>
+                  <input
+                    type="text"
+                    id="sellEntryPrice"
+                    class="form-control form-control-sm text-end"
+                    inputmode="decimal"
+                    value="{{ valuation.sell_unit_label }}">
+                </div>
+                <div class="col-6">
+                  <label for="buyEntryPrice" class="form-label small text-body-secondary mb-1">
+                    Compra (long)
+                  </label>
+                  <input
+                    type="text"
+                    id="buyEntryPrice"
+                    class="form-control form-control-sm text-end"
+                    inputmode="decimal"
+                    value="{{ valuation.buy_unit_label }}">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card h-100 border-0 bg-body-tertiary">
+            <div class="card-body d-flex flex-column">
+              <h3 class="h6 fw-semibold text-body-secondary mb-3">Estratificação</h3>
 
             <dl class="row small gy-1 mb-3">
               <dt class="col-7 text-body-tertiary">Recebe na venda</dt>
@@ -484,6 +518,7 @@
             <p class="small text-body-tertiary mb-0 mt-2">
               Esta boleta é uma simulação visual. A execução real será conectada no próximo passo.
             </p>
+            </div>
           </div>
         </div>
       </div>
@@ -532,6 +567,8 @@
   const receiveText    = document.getElementById('receiveText');
   const payText        = document.getElementById('payText');
   const netText        = document.getElementById('netText');
+  const sellEntryInput = document.getElementById('sellEntryPrice');
+  const buyEntryInput  = document.getElementById('buyEntryPrice');
 
   // hidden (submit)
   const sellQtyHidden  = document.getElementById('sellQtyHidden');
@@ -554,6 +591,12 @@
   if (!isFinite(sellUnit)) sellUnit = 0;
   if (!isFinite(buyUnit))  buyUnit  = 0;
 
+  function syncUnitInput(inputEl, nextValue) {
+    if (!inputEl) return;
+    if (document.activeElement === inputEl) return;
+    inputEl.value = fmtBRL(nextValue);
+  }
+
   function recalc() {
     const sellLots = clampInt(sellLotsInput.value, 1);
     const buyLots  = clampInt(buyLotsInput.value, 1);
@@ -571,6 +614,8 @@
     // atualiza textos
     sellSharesText.textContent = `${sellShares} ações`;
     buySharesText.textContent  = `${buyShares} ações`;
+    if (sellUnitText) sellUnitText.textContent = fmtBRL(sellUnit);
+    if (buyUnitText) buyUnitText.textContent = fmtBRL(buyUnit);
     sellTotalText.textContent  = fmtBRL(sellTotal);
     buyTotalText.textContent   = fmtBRL(buyTotal);
 
@@ -593,6 +638,32 @@
   // recalcula em digitação e seta inicial
   sellLotsInput.addEventListener('input', recalc);
   buyLotsInput.addEventListener('input', recalc);
+  if (sellEntryInput) {
+    sellEntryInput.addEventListener('input', function () {
+      const raw = sellEntryInput.value || '';
+      if (!raw.trim()) {
+        sellUnit = 0;
+      } else {
+        const parsed = parseMoneyBR(raw);
+        if (isFinite(parsed)) sellUnit = parsed;
+      }
+      recalc();
+    });
+    syncUnitInput(sellEntryInput, sellUnit);
+  }
+  if (buyEntryInput) {
+    buyEntryInput.addEventListener('input', function () {
+      const raw = buyEntryInput.value || '';
+      if (!raw.trim()) {
+        buyUnit = 0;
+      } else {
+        const parsed = parseMoneyBR(raw);
+        if (isFinite(parsed)) buyUnit = parsed;
+      }
+      recalc();
+    });
+    syncUnitInput(buyEntryInput, buyUnit);
+  }
   recalc();
 })();
 </script>
