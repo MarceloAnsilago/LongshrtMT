@@ -1623,6 +1623,11 @@ def operacoes(request):
     initial_right = ""
     pair_obj: Pair | None = None
     pair_param = request.GET.get("pair")
+    left_param = (request.GET.get("left") or "").strip().upper()
+    right_param = (request.GET.get("right") or "").strip().upper()
+
+    if request.method == "GET" and not pair_param and not left_param and not right_param:
+        return redirect("pairs:analysis")
 
     if pair_param:
         try:
@@ -1639,8 +1644,6 @@ def operacoes(request):
             messages.warning(request, "Par informado na analise nao foi encontrado.")
 
     if not pair_obj:
-        left_param = (request.GET.get("left") or "").strip().upper()
-        right_param = (request.GET.get("right") or "").strip().upper()
         if left_param or right_param:
             initial_left = left_param
             initial_right = right_param
