@@ -712,12 +712,14 @@ def analysis_prices(request: HttpRequest) -> HttpResponse:
         user=request.user,
         refresh_requested=refresh_requested,
     )
+    analysis_charts = _build_analysis_charts_context(pair=pair, window=window, config=config)
 
     context = {
         "pair": pair,
         "pair_label": f"{pair.left.ticker} x {pair.right.ticker}",
         "window": window,
         **charts_context,
+        **analysis_charts,
         "current": "analise",
     }
     return render(request, "pairs/analysis_prices.html", context)
@@ -857,4 +859,74 @@ def _build_price_charts_context(
         "mt5_error": mt5_error,
         "mt5_refreshed": refreshed,
         "refresh_requested": refresh_requested,
+    }
+
+
+def _build_analysis_charts_context(
+    pair: Pair,
+    window: int,
+    config: UserMetricsConfig | None,
+) -> dict[str, object]:
+    beta_window = _user_beta_window(config)
+    data = get_pair_timeseries_and_metrics(
+        pair=pair,
+        window=window,
+        beta_window=beta_window,
+    )
+    series = data["zscore_series"]
+    normalized_series = data["normalized_series"]
+
+    labels: list[str] = []
+    values: list[float] = []
+    for dt_value, z_value in series:
+        labels.append(dt_value.strftime("%Y-%m-%d") if hasattr(dt_value, "strftime") else str(dt_value))
+        try:
+            values.append(float(z_value))
+        except (TypeError, ValueError):
+            values.append(0.0)
+
+    normalized_labels: list[str] = []
+    normalized_left: list[float] = []
+    normalized_right: list[float] = []
+    for dt_value, left_val, right_val in normalized_series:
+        normalized_labels.append(dt_value.strftime("%Y-%m-%d") if hasattr(dt_value, "strftime") else str(dt_value))
+        try:
+            normalized_left.append(float(left_val))
+        except (TypeError, ValueError):
+            normalized_left.append(0.0)
+        try:
+            normalized_right.append(float(right_val))
+        except (TypeError, ValueError):
+            normalized_right.append(0.0)
+
+    dispersion_points: list[dict[str, float]] = []
+    for left_val, right_val in zip(normalized_left, normalized_right):
+        try:
+            x_val = float(left_val)
+            y_val = float(right_val)
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(x_val) and math.isfinite(y_val)):
+            continue
+        dispersion_points.append({"x": x_val, "y": y_val})
+
+    pair_label = f"{pair.left.ticker} x {pair.right.ticker}"
+    slug_source = str(pair.pk or f"{pair.left.ticker}-{pair.right.ticker}")
+    chart_id = re.sub(r"[^a-zA-Z0-9_-]", "", f"{slug_source}-{window}") or "analysis-chart"
+
+    return {
+        "pair_label": pair_label,
+        "left_label": pair.left.ticker,
+        "right_label": pair.right.ticker,
+        "labels_json": json.dumps(labels),
+        "values_json": json.dumps(values),
+        "normalized_labels_json": json.dumps(normalized_labels),
+        "normalized_left_json": json.dumps(normalized_left),
+        "normalized_right_json": json.dumps(normalized_right),
+        "dispersion_points_json": json.dumps(dispersion_points),
+        "chart_id": chart_id,
+        "data_points": len(values),
+        "normalized_points": len(normalized_labels),
+        "dispersion_points": len(dispersion_points),
+        "generated_at": now(),
     }
