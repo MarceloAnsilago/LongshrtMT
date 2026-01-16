@@ -1,0 +1,34 @@
+{% if mt5_error %}
+  <div class="alert alert-warning small mb-3">
+    Falha ao atualizar via MT5: {{ mt5_error }}
+  </div>
+{% elif not candles_ready %}
+  <div class="alert alert-info small mb-3">
+    Candles indisponiveis: faltam dados OHLC para um dos ativos.
+  </div>
+{% endif %}
+
+<div class="card shadow-sm rounded-4">
+  <div class="card-body">
+    {% if chart_title %}
+      <div class="d-flex flex-wrap justify-content-between align-items-center mb-2">
+        <div class="fw-semibold">{{ chart_title }}</div>
+      </div>
+    {% endif %}
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-2">
+      <div class="fw-semibold text-danger">Vendido - {{ left_label }}</div>
+      {% if left_entry_label and left_entry_label != "--" %}
+        <div class="text-body-secondary small">Entrada: {{ left_entry_label }}</div>
+      {% endif %}
+    </div>
+    <div id="chartLeft" style="height:300px;"></div>
+    <hr class="my-3 text-body-tertiary">
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-2">
+      <div class="fw-semibold text-success">Comprado - {{ right_label }}</div>
+      {% if right_entry_label and right_entry_label != "--" %}
+        <div class="text-body-secondary small">Entrada: {{ right_entry_label }}</div>
+      {% endif %}
+    </div>
+    <div id="chartRight" style="height:300px;"></div>
+  </div>
+</div>

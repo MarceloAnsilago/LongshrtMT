@@ -2,6 +2,7 @@
 
 {% block extra_head %}
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 {% endblock %}
 
 {% block content %}
@@ -80,6 +81,8 @@
        hx-trigger="load"
        hx-swap="innerHTML">
   </div>
+
+  {% include "pairs/_analysis_charts.html" %}
 </div>
 {% endblock %}
 
@@ -165,4 +168,6 @@
     buildHref();
   })();
 </script>
+
+{% include "pairs/_analysis_charts_script.html" %}
 {% endblock %}

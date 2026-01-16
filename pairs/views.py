@@ -563,6 +563,12 @@ def analysis_entry(request: HttpRequest) -> HttpResponse:
     try:
         pair, window, source = _resolve_context(request, config)
         existing_operation_info = _build_existing_operation_info(request, pair)
+        charts_context = _build_price_charts_context(
+            pair=pair,
+            window=window,
+            user=request.user,
+            refresh_requested=False,
+        )
         context = {
             "pair": pair,
             "window": window,
@@ -570,6 +576,8 @@ def analysis_entry(request: HttpRequest) -> HttpResponse:
             "source": source,
             "current": "analise",
             "existing_operation_info": existing_operation_info,
+            "chart_title": "Graficos de preco",
+            **charts_context,
         }
         return render(request, "pairs/analysis.html", context)
     except Http404:
@@ -697,36 +705,61 @@ def analysis_prices(request: HttpRequest) -> HttpResponse:
     config = _get_user_metrics_config(request.user)
     pair, window, _ = _resolve_context(request, config)
 
+    refresh_requested = request.GET.get("refresh") == "1"
+    charts_context = _build_price_charts_context(
+        pair=pair,
+        window=window,
+        user=request.user,
+        refresh_requested=refresh_requested,
+    )
+
+    context = {
+        "pair": pair,
+        "pair_label": f"{pair.left.ticker} x {pair.right.ticker}",
+        "window": window,
+        **charts_context,
+        "current": "analise",
+    }
+    return render(request, "pairs/analysis_prices.html", context)
+
+
+def _build_price_charts_context(
+    pair: Pair,
+    window: int,
+    user,
+    refresh_requested: bool,
+) -> dict[str, object]:
     top_asset = pair.left
     bottom_asset = pair.right
     top_entry_price = None
     bottom_entry_price = None
     entry_date = None
-    op_filters = (
-        Q(left_asset=pair.left, right_asset=pair.right)
-        | Q(left_asset=pair.right, right_asset=pair.left)
-    )
-    if pair.pk:
-        op_filters |= Q(pair=pair)
-    latest_op = (
-        Operation.objects.select_related("sell_asset", "buy_asset")
-        .filter(user=request.user, status=Operation.STATUS_OPEN)
-        .filter(op_filters)
-        .order_by("-opened_at")
-        .first()
-    )
-    if latest_op:
-        top_asset = latest_op.sell_asset
-        bottom_asset = latest_op.buy_asset
-        top_entry_price = latest_op.sell_price
-        bottom_entry_price = latest_op.buy_price
-        if latest_op.operation_date:
-            entry_date = latest_op.operation_date
-        elif latest_op.opened_at:
-            try:
-                entry_date = timezone.localtime(latest_op.opened_at).date()
-            except Exception:
-                entry_date = None
+    if getattr(user, "is_authenticated", False):
+        op_filters = (
+            Q(left_asset=pair.left, right_asset=pair.right)
+            | Q(left_asset=pair.right, right_asset=pair.left)
+        )
+        if pair.pk:
+            op_filters |= Q(pair=pair)
+        latest_op = (
+            Operation.objects.select_related("sell_asset", "buy_asset")
+            .filter(user=user, status=Operation.STATUS_OPEN)
+            .filter(op_filters)
+            .order_by("-opened_at")
+            .first()
+        )
+        if latest_op:
+            top_asset = latest_op.sell_asset
+            bottom_asset = latest_op.buy_asset
+            top_entry_price = latest_op.sell_price
+            bottom_entry_price = latest_op.buy_price
+            if latest_op.operation_date:
+                entry_date = latest_op.operation_date
+            elif latest_op.opened_at:
+                try:
+                    entry_date = timezone.localtime(latest_op.opened_at).date()
+                except Exception:
+                    entry_date = None
 
     def _fmt_money(value) -> str:
         if value is None:
@@ -768,7 +801,6 @@ def analysis_prices(request: HttpRequest) -> HttpResponse:
 
     mt5_error = ""
     refreshed = False
-    refresh_requested = request.GET.get("refresh") == "1"
     if refresh_requested:
         if not getattr(settings, "MT5_BRIDGE_URL", ""):
             mt5_error = "MT5_BRIDGE_URL nao configurado."
@@ -809,10 +841,7 @@ def analysis_prices(request: HttpRequest) -> HttpResponse:
     right_series, right_candles = _build_price_series(bottom_asset, window)
     candles_ready = bool(left_candles) and bool(right_candles)
 
-    context = {
-        "pair": pair,
-        "pair_label": f"{pair.left.ticker} x {pair.right.ticker}",
-        "window": window,
+    return {
         "left_label": top_asset.ticker,
         "right_label": bottom_asset.ticker,
         "left_series_json": json.dumps(left_series),
@@ -828,6 +857,4 @@ def analysis_prices(request: HttpRequest) -> HttpResponse:
         "mt5_error": mt5_error,
         "mt5_refreshed": refreshed,
         "refresh_requested": refresh_requested,
-        "current": "analise",
     }
-    return render(request, "pairs/analysis_prices.html", context)
