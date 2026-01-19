@@ -5,7 +5,10 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-import httpx
+try:
+    import httpx
+except ModuleNotFoundError:  # pragma: no cover - fallback for local shells without deps
+    httpx = None
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -46,6 +49,8 @@ def _get_api_key() -> str:
 
 
 def _request(method: str, path: str, **kwargs: Any) -> Dict[str, Any]:
+    if httpx is None:
+        raise MT5BridgeError("httpx is not installed; install dependencies to use mt5_bridge_client")
     base_url = _get_base_url()
     url = f"{base_url}/{path.lstrip('/')}"
     url = url.rstrip("/")
@@ -99,6 +104,31 @@ def fetch_last_close_d1(symbol: str) -> Optional[float]:
 def fetch_rates(symbol: str, timeframe: str = "D1", count: int = 1) -> list[Dict[str, Any]]:
     payload = {"symbol": symbol, "timeframe": timeframe, "count": count}
     return _request("POST", "/api/rates", json=payload).get("rates", [])
+
+
+def fetch_rates_range(
+    symbol: str,
+    timeframe: str,
+    start: str | datetime | None = None,
+    end: str | datetime | None = None,
+    limit: int | None = None,
+) -> Dict[str, Any]:
+    params: Dict[str, Any] = {"symbol": symbol, "timeframe": timeframe}
+    if start:
+        params["start"] = start.isoformat() if isinstance(start, datetime) else start
+    if end:
+        params["end"] = end.isoformat() if isinstance(end, datetime) else end
+    if limit is not None:
+        params["limit"] = limit
+    try:
+        return _request("GET", "/api/rates_range", params=params)
+    except MT5BridgeError as exc:
+        message = str(exc)
+        if "404" in message:
+            raise MT5BridgeError(
+                "Endpoint rates_range não disponível no mt5_bridge"
+            ) from exc
+        raise
 
 
 def execute_trades(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
