@@ -1,4 +1,4 @@
-app = "lspythondj"
+app = "longshort-django-mt5"
 primary_region = "gru"
 
 [build]

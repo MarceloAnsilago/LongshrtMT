@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from acoes.models import Asset
 from cotacoes.models import QuoteDaily, MissingQuoteLog, QuoteLive
-from mt5api.mt5client import (
+from mt5_bridge_client.mt5client import (
     MT5BridgeError,
     fetch_rates,
     fetch_rates_range,

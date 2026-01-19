@@ -1,19 +1,24 @@
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Union, Literal
 import logging
 import os
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import MetaTrader5 as mt5  # para usar as constantes de timeframe
 
 from .mt5_session import init_mt5
 from . import quotes_core
+from .middleware import RequestLogMiddleware, SecurityMiddleware
+from .security import load_cors_origins, load_security_config
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="MT5 Bridge", version="0.1.0")
+security_config = load_security_config()
+cors_origins = load_cors_origins()
 
 def _log_account_context() -> None:
     info = mt5.account_info()
@@ -27,6 +32,26 @@ def _log_account_context() -> None:
         getattr(info, "server", None),
         margin_label,
     )
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # inicializa conexao com o MT5 quando o servidor sobe
+    init_mt5()
+    _log_account_context()
+    yield
+
+app = FastAPI(title="MT5 Bridge", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(RequestLogMiddleware, config=security_config)
+if cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+app.add_middleware(SecurityMiddleware, config=security_config)
 
 def _env_int(key: str, default: int) -> int:
     try:
@@ -42,16 +67,6 @@ _MARGIN_MODE_LABELS: Dict[int, str] = {
     mt5.ACCOUNT_MARGIN_MODE_RETAIL_HEDGING: "RETAIL_HEDGING",
     mt5.ACCOUNT_MARGIN_MODE_RETAIL_NETTING: "RETAIL_NETTING",
 }
-
-
-# ------------------------------------------------------------
-# Eventos de ciclo de vida
-# ------------------------------------------------------------
-@app.on_event("startup")
-def startup_event():
-    # inicializa conexão com o MT5 quando o servidor sobe
-    init_mt5()
-    _log_account_context()
 
 
 # ------------------------------------------------------------
@@ -440,6 +455,16 @@ def account_info():
 # ------------------------------------------------------------
 # Endpoints
 # ------------------------------------------------------------
+@app.get("/")
+def root():
+    return {"status": "ok", "service": "mt5_bridge"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.get("/api/ping")
 def ping():
     return {"status": "ok", "message": "mt5_bridge rodando"}

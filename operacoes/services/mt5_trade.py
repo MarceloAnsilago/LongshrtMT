@@ -14,8 +14,12 @@ from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 
 from acoes.models import Asset
-from mt5_bridge_client.mt5client import MT5BridgeError, execute_trades, fetch_positions
-from mt5api.mt5client import MT5BridgeError as MT5ApiBridgeError, get_latest_price
+from mt5_bridge_client.mt5client import (
+    MT5BridgeError,
+    execute_trades,
+    fetch_positions,
+    get_latest_price,
+)
 from operacoes.models import MT5AuditEvent, Operation, OperationMT5Trade
 from operacoes.services.mt5_audit import (
     create_mt5_audit_event,
@@ -89,7 +93,7 @@ def _latest_market_price(symbol: str, fallback_price: Decimal | None) -> Decimal
     latest = None
     try:
         latest = get_latest_price(symbol)
-    except MT5ApiBridgeError:
+    except MT5BridgeError:
         latest = None
     latest_decimal = _safe_decimal(latest)
     if latest_decimal is not None and latest_decimal > 0:

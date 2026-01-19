@@ -15,6 +15,22 @@ class MT5BridgeError(Exception):
     """Errors while talking to the MT5 bridge."""
 
 
+class MT5BridgeAuthError(MT5BridgeError):
+    """Authentication failed when calling the MT5 bridge."""
+
+
+class MT5BridgeTimeout(MT5BridgeError):
+    """Timeout while calling the MT5 bridge."""
+
+
+class MT5BridgeServerError(MT5BridgeError):
+    """MT5 bridge returned a server error."""
+
+
+class MT5BridgeRateLimit(MT5BridgeError):
+    """MT5 bridge rate limit reached."""
+
+
 def _get_base_url() -> str:
     base = getattr(settings, "MT5_BRIDGE_URL", "").rstrip("/")
     if not base:
@@ -22,20 +38,51 @@ def _get_base_url() -> str:
     return base
 
 
+def _get_api_key() -> str:
+    api_key = getattr(settings, "MT5_BRIDGE_API_KEY", "")
+    if not api_key:
+        raise MT5BridgeAuthError("MT5_BRIDGE_API_KEY is not configured")
+    return api_key
+
+
 def _request(method: str, path: str, **kwargs: Any) -> Dict[str, Any]:
     base_url = _get_base_url()
     url = f"{base_url}/{path.lstrip('/')}"
     url = url.rstrip("/")
+    headers = dict(kwargs.pop("headers", {}) or {})
+    headers.setdefault("X-API-Key", _get_api_key())
     logger.info("MT5 bridge request %s %s", method, url)
     try:
-        response = httpx.request(method, url, timeout=20.0, **kwargs)
+        response = httpx.request(method, url, timeout=10.0, headers=headers, **kwargs)
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
         detail = exc.response.text or exc.response.reason_phrase
-        raise MT5BridgeError(f"MT5 bridge responded {exc.response.status_code}: {detail}") from exc
+        if status in {401, 403}:
+            raise MT5BridgeAuthError(f"MT5 bridge auth failed ({status})") from exc
+        if status == 429:
+            raise MT5BridgeRateLimit("MT5 bridge rate limit exceeded") from exc
+        if status >= 500:
+            raise MT5BridgeServerError(f"MT5 bridge error {status}: {detail}") from exc
+        raise MT5BridgeError(f"MT5 bridge responded {status}: {detail}") from exc
+    except httpx.TimeoutException as exc:
+        raise MT5BridgeTimeout(f"MT5 bridge timed out: {exc}") from exc
     except httpx.RequestError as exc:
         raise MT5BridgeError(f"Failed to reach MT5 bridge: {exc}") from exc
-    return response.json()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise MT5BridgeError("MT5 bridge returned invalid JSON") from exc
+
+
+def healthcheck() -> bool:
+    data = _request("GET", "/health")
+    return data.get("status") == "ok"
+
+
+def get_latest_price(symbol: str) -> Optional[float]:
+    data = _request("GET", f"/api/latest_price/{symbol}")
+    return data.get("price")
 
 
 def fetch_last_bar_d1(symbol: str) -> Optional[Dict[str, Any]]:
@@ -57,6 +104,12 @@ def fetch_rates(symbol: str, timeframe: str = "D1", count: int = 1) -> list[Dict
 def execute_trades(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
     payload = {"trades": trades}
     return _request("POST", "/api/trades", json=payload).get("trades", [])
+
+
+def send_order(payload: Dict[str, Any]) -> Dict[str, Any]:
+    data = _request("POST", "/api/trades", json={"trades": [payload]})
+    trades = data.get("trades", [])
+    return trades[0] if trades else {}
 
 
 def explain_close(identifier: int, from_dt: datetime, to_dt: datetime) -> Dict[str, Any]:

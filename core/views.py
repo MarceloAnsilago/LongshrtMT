@@ -32,7 +32,7 @@ from longshort.services.metrics import (
     get_zscore_series,
 )
 from longshort.services.quotes import fetch_latest_price, update_live_quotes
-from mt5api.mt5client import get_latest_price
+from mt5_bridge_client.mt5client import MT5BridgeError, get_latest_price
 from pairs.constants import DEFAULT_BASE_WINDOW, DEFAULT_WINDOWS
 from pairs.forms import UserMetricsConfigForm
 from pairs.models import Pair, UserMetricsConfig
@@ -2509,5 +2509,5 @@ def teste_mt5(request):
     try:
         price = get_latest_price(symbol)
         return JsonResponse({"ok": True, "symbol": symbol, "price": price})
-    except Exception as exc:
-        return JsonResponse({"ok": False, "error": str(exc)}, status=500)
+    except MT5BridgeError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=502)
