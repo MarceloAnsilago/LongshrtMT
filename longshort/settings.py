@@ -24,9 +24,14 @@ def _env_bool(key: str, default: bool = False) -> bool:
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-def _env_hosts(key: str, default: str) -> list[str]:
-    raw = os.environ.get(key, default)
-    return [host.strip() for host in raw.split(",") if host.strip()]
+def parse_csv_env(name: str, default: str = "") -> list[str]:
+    raw = os.getenv(name, default).replace(" ", ",")
+    return [value.strip() for value in raw.split(",") if value.strip()]
+
+
+def parse_space_env(name: str, default: str = "") -> list[str]:
+    raw = os.getenv(name, default)
+    return [value.strip() for value in raw.split() if value.strip()]
 
 
 # Quick-start development settings - unsuitable for production
@@ -40,9 +45,16 @@ SECRET_KEY = os.environ.get(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = _env_bool("DJANGO_DEBUG", True)
 
-ALLOWED_HOSTS = _env_hosts("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
+ALLOWED_HOSTS = parse_csv_env("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
 
-CSRF_TRUSTED_ORIGINS = _env_hosts("DJANGO_CSRF_TRUSTED_ORIGINS", "")
+CSRF_TRUSTED_ORIGINS = parse_space_env("DJANGO_CSRF_TRUSTED_ORIGINS", "")
+
+USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+# Enable only if your proxy forwards HTTPS correctly; disable if you hit redirect loops.
+SECURE_SSL_REDIRECT = _env_bool("DJANGO_SECURE_SSL_REDIRECT", False)
 
 
 # Application definition

@@ -3,7 +3,7 @@ python manage.py runserver
 
 python manage.py shell
 
-python manage.py runserver 127.0.0.1:8000
+fly deploy -a longshort-django-mt5
 
 LongShortDjango
 
