@@ -23,15 +23,6 @@ def _env_bool(key: str, default: bool = False) -> bool:
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-MT5_BRIDGE_URL = os.environ.get("MT5_BRIDGE_URL", "http://127.0.0.1:9000")
-MT5_BRIDGE_API_KEY = os.environ.get("MT5_BRIDGE_API_KEY", "")
-try:
-    MT5_TRADE_MAGIC = int(os.environ.get("MT5_TRADE_MAGIC", "741853"))
-except (TypeError, ValueError):
-    MT5_TRADE_MAGIC = 741853
-MT5_TRADE_COMMENT = os.environ.get("MT5_TRADE_COMMENT", "LongShort")
-MT5_DRY_RUN = _env_bool("MT5_DRY_RUN", True)
-
 
 def _env_hosts(key: str, default: str) -> list[str]:
     raw = os.environ.get(key, default)
@@ -110,7 +101,6 @@ TEMPLATES = [
             'django.template.context_processors.request',
             'django.contrib.auth.context_processors.auth',
             'django.contrib.messages.context_processors.messages',
-            'core.context_processors.mt5_dry_run',
         ],
         },
     },
@@ -120,18 +110,41 @@ TEMPLATES = [
 WSGI_APPLICATION = 'longshort.wsgi.application'
 
 
-# Database
+# Database (Supabase Session Pooler / IPv4-friendly)
 # ----------------------------------
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if DATABASE_URL:
-    db_config_kwargs = {
-        "default": DATABASE_URL,
-        "conn_max_age": 600,
-    }
-    if DATABASE_URL.lower().startswith(("postgres://", "postgresql://")):
-        db_config_kwargs["ssl_require"] = True
+DB_NAME = os.environ.get("DB_NAME")
+DB_USER = os.environ.get("DB_USER")
+DB_PASSWORD = os.environ.get("DB_PASSWORD")
+DB_HOST = os.environ.get("DB_HOST")
+DB_PORT = os.environ.get("DB_PORT")
+
+
+def _env_present(*values: str | None) -> bool:
+    return all(value is not None and value.strip() for value in values)
+
+
+def _env_has_placeholder(value: str | None) -> bool:
+    if not value:
+        return False
+    lowered = value.lower()
+    return "<" in lowered or "project_ref" in lowered or "coloque" in lowered
+
+if _env_present(DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT):
+    if _env_has_placeholder(DB_USER) or _env_has_placeholder(DB_PASSWORD) or _env_has_placeholder(DB_HOST):
+        raise ValueError("Database env vars must be real values, not placeholders.")
     DATABASES = {
-        "default": dj_database_url.config(**db_config_kwargs),
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": DB_NAME,
+            "USER": DB_USER,
+            "PASSWORD": DB_PASSWORD,
+            "HOST": DB_HOST,
+            "PORT": DB_PORT,
+            "OPTIONS": {
+                "sslmode": "require",
+            },
+            "CONN_MAX_AGE": 0,
+        }
     }
 else:
     DATABASES = {

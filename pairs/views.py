@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import math
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime
 import re
 import threading
 import time
@@ -31,7 +31,6 @@ from longshort.services.metrics import (
     get_pair_timeseries_and_metrics,
     get_zscore_series,
 )
-from mt5_bridge_client.mt5client import MT5BridgeError, fetch_rates
 from operacoes.models import Operation
 from .constants import DEFAULT_BASE_WINDOW, DEFAULT_BETA_WINDOW, DEFAULT_WINDOWS
 from .models import Pair, UserMetricsConfig
@@ -773,48 +772,10 @@ def _build_price_charts_context(
         raw = raw.replace(",", "X").replace(".", ",").replace("X", ".")
         return f"R$ {raw}"
 
-    def _update_ohlc_from_mt5(asset: Asset, count: int) -> int:
-        bars = fetch_rates(asset.ticker, "D1", max(1, int(count or 1)))
-        if not bars:
-            return 0
-        updated = 0
-        for bar in bars:
-            try:
-                ts = int(bar.get("time"))
-                bar_date = datetime.fromtimestamp(ts, tz=dt_timezone.utc).date()
-            except Exception:
-                continue
-            if bar.get("close") is None:
-                continue
-            defaults = {
-                "open": bar.get("open"),
-                "high": bar.get("high"),
-                "low": bar.get("low"),
-                "close": bar.get("close"),
-                "is_provisional": False,
-            }
-            QuoteDaily.objects.update_or_create(
-                asset=asset,
-                date=bar_date,
-                defaults=defaults,
-            )
-            updated += 1
-        return updated
-
-    mt5_error = ""
+    data_error = ""
     refreshed = False
     if refresh_requested:
-        if not getattr(settings, "MT5_BRIDGE_URL", ""):
-            mt5_error = "MT5_BRIDGE_URL nao configurado."
-        else:
-            try:
-                _update_ohlc_from_mt5(top_asset, window)
-                _update_ohlc_from_mt5(bottom_asset, window)
-                refreshed = True
-            except MT5BridgeError as exc:
-                mt5_error = str(exc)
-            except OperationalError:
-                mt5_error = "Banco ocupado no momento. Tente atualizar novamente."
+        refreshed = True
 
     def _build_price_series(asset: Asset, max_rows: int) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
         rows = list(
@@ -856,8 +817,8 @@ def _build_price_charts_context(
         "right_entry_label": _fmt_money(bottom_entry_price),
         "entry_date_json": json.dumps(entry_date.isoformat()) if entry_date else "null",
         "candles_ready": candles_ready,
-        "mt5_error": mt5_error,
-        "mt5_refreshed": refreshed,
+        "data_error": data_error,
+        "data_refreshed": refreshed,
         "refresh_requested": refresh_requested,
     }
 

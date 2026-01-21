@@ -1,13 +1,7 @@
-
 & .\venv\Scripts\Activate.ps1 
-uvicorn mt5_bridge.api:app --host 127.0.0.1 --port 8001 --workers 1
-
 python manage.py runserver
 
 python manage.py shell
-
-uvicorn mt5_bridge.api:app --reload --host 127.0.0.1 --port 8001 
-uvicorn mt5_bridge.api:app --host 127.0.0.1 --port 8001 --workers 1
 
 python manage.py runserver 127.0.0.1:8000
 
@@ -20,4 +14,9 @@ chave fly
 -AlZYM22UztWiPZ5eYARtb-02wzNayE-8KjQAH_Vnbk
 
 Admin
-J4!v9tQ2#Lm8sWX0
+J4!v9tQ2#Lm8sWX0      <---database password supabase
+
+usuairo na nuvem
+Marcelo
+celosmg1@gmail.com
+celo123

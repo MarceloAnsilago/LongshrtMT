@@ -1,6 +1,6 @@
-{% if mt5_error %}
+{% if data_error %}
   <div class="alert alert-warning small mb-3">
-    Falha ao atualizar via MT5: {{ mt5_error }}
+    Falha ao atualizar via Supabase: {{ data_error }}
   </div>
 {% elif not candles_ready %}
   <div class="alert alert-info small mb-3">

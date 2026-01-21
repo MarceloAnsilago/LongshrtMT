@@ -32,16 +32,10 @@ from longshort.services.metrics import (
     get_zscore_series,
 )
 from longshort.services.quotes import fetch_latest_price, update_live_quotes
-from mt5_bridge_client.mt5client import MT5BridgeError, get_latest_price
 from pairs.constants import DEFAULT_BASE_WINDOW, DEFAULT_WINDOWS
 from pairs.forms import UserMetricsConfigForm
 from pairs.models import Pair, UserMetricsConfig
-from operacoes.models import Operation, OperationMetricSnapshot, OperationMT5Trade
-from operacoes.services.mt5_trade import (
-    MT5TradeExecutionError,
-    close_simulation_trades_for_operation,
-    execute_pair_trade,
-)
+from operacoes.models import Operation, OperationMetricSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -219,38 +213,9 @@ def _build_home_operations_payload(request):
                 to_attr="current_snapshots",
             ),
         )
-        .prefetch_related("mt5_trades")
         .filter(user=request.user, status=Operation.STATUS_OPEN)
         .order_by("-opened_at")
     )
-
-    def _serialize_mt5_trade(trade: OperationMT5Trade | None) -> dict | None:
-        if not trade:
-            return None
-        expiration_days = None
-        if trade.expiration_at:
-            expiration_local = timezone.localtime(trade.expiration_at)
-            now_local = timezone.localtime(timezone.now())
-            delta_seconds = (expiration_local - now_local).total_seconds()
-            if delta_seconds <= 0:
-                expiration_days = 0
-            else:
-                expiration_days = ceil(delta_seconds / 86400)
-        return {
-            "leg": trade.leg,
-            "symbol": trade.symbol,
-            "ticket": trade.ticket,
-            "side": trade.side,
-            "volume": trade.volume,
-            "price_open": trade.price_open,
-            "sl": trade.sl,
-            "tp": trade.tp,
-            "status": trade.status,
-            "comment": trade.comment,
-            "opened_at": trade.opened_at,
-            "expiration_at": trade.expiration_at,
-            "expiration_days_remaining": expiration_days,
-        }
 
     for operation in operations_qs:
         entry_snapshot = (operation.entry_snapshots[0] if getattr(operation, "entry_snapshots", None) else None)
@@ -380,16 +345,11 @@ def _build_home_operations_payload(request):
                 z_delta_label = "--"
                 is_delta_positive = False
 
-        trades_qs = getattr(operation, "mt5_trades", None)
-        trades_by_leg = {trade.leg: trade for trade in (trades_qs.all() if trades_qs is not None else [])}
-        sell_trade = trades_by_leg.get("A")
-        buy_trade = trades_by_leg.get("B")
-
         sell_qty_dec = Decimal(operation.sell_quantity)
         buy_qty_dec = Decimal(operation.buy_quantity)
 
-        entry_sell_price = _to_decimal(getattr(sell_trade, "price_open", None)) or _to_decimal(operation.sell_price)
-        entry_buy_price = _to_decimal(getattr(buy_trade, "price_open", None)) or _to_decimal(operation.buy_price)
+        entry_sell_price = _to_decimal(operation.sell_price)
+        entry_buy_price = _to_decimal(operation.buy_price)
 
         entry_sell_total = (entry_sell_price * sell_qty_dec).quantize(money_quant)
         entry_buy_total = (entry_buy_price * buy_qty_dec).quantize(money_quant)
@@ -479,11 +439,6 @@ def _build_home_operations_payload(request):
                     "retorno_total_label": _format_pct(pnl_stats.get("retorno_total_%")),
                 }
 
-        mt5_info = {
-            "A": _serialize_mt5_trade(trades_by_leg.get("A")),
-            "B": _serialize_mt5_trade(trades_by_leg.get("B")),
-        }
-
         operations_cards.append(
             {
                 "operation": operation,
@@ -510,7 +465,6 @@ def _build_home_operations_payload(request):
                 "pnl_summary": pnl_summary,
                 "pl_total": pl_total,
                 "current_zscore": current_zscore,
-                "mt5": mt5_info,
             }
         )
 
@@ -1580,24 +1534,6 @@ def operacoes(request):
         operation.pair_metrics = metrics_payload if isinstance(metrics_payload, dict) else None
         operation.save()
 
-        if operation.is_real:
-            if getattr(settings, "MT5_DRY_RUN", False):
-                messages.warning(
-                    request,
-                    "MT5_DRY_RUN está ativado — operação NÃO enviada para o MT5.",
-                )
-                logger.info(
-                    "DRY_RUN ativo: operação %s marcada como real NÃO foi executada",
-                    operation.pk,
-                )
-            else:
-                try:
-                    execute_pair_trade(operation)
-                except MT5TradeExecutionError as exc:
-                    operation.delete()
-                    errors.append(f"Falha ao enviar a operação real para o MT5 Bridge: {exc}")
-                    return respond_with_errors()
-
         metrics_snapshot_payload = metrics_payload if isinstance(metrics_payload, dict) else None
         if metrics_snapshot_payload:
             snapshot = OperationMetricSnapshot(
@@ -2098,416 +2034,3 @@ def operacao_encerrar(request, pk: int):
             auto_close_triggered = request.POST.get("auto_close_triggered") == "1"
             operation.status = Operation.STATUS_CLOSED
             operation.save(update_fields=["status", "updated_at"])
-            close_report = None
-            if not operation.is_real:
-                close_report = close_simulation_trades_for_operation(operation)
-            summary = f"Operacao {pair_label} encerrada com sucesso."
-            if operation.is_real:
-                summary += " Conta real: as ordens permanecem abertas no MT5."
-            elif close_report:
-                details = []
-                closed = close_report.get("closed", 0)
-                missing = close_report.get("missing", 0)
-                if closed:
-                    details.append(f"{closed} perna(s) fechada(s)")
-                if missing:
-                    details.append(f"{missing} ja nao constam no MT5")
-                if details:
-                    summary += " MT5: " + "; ".join(details) + "."
-            messages.success(request, summary)
-            if close_report:
-                for error in close_report.get("errors", []):
-                    messages.warning(request, f"MT5: {error}")
-            if auto_close_triggered:
-                _enqueue_home_closed_notification(request, pair_label, auto_close=True)
-            return redirect("core:home")
-
-    entry_snapshot = None
-    latest_snapshot = None
-    entry_metrics_payload = {}
-    snapshots = list(operation.metric_snapshots.all())
-    if snapshots:
-        latest_snapshot = snapshots[0]
-        for snap in snapshots:
-            if snap.snapshot_type == OperationMetricSnapshot.TYPE_OPEN and entry_snapshot is None:
-                entry_snapshot = snap
-    if entry_snapshot and entry_snapshot.payload:
-        entry_metrics_payload = entry_snapshot.payload
-    elif isinstance(operation.pair_metrics, dict):
-        entry_metrics_payload = operation.pair_metrics
-
-    entry_zscore = entry_snapshot.zscore if entry_snapshot and entry_snapshot.zscore is not None else operation.entry_zscore
-
-    pair_ref = operation.pair if operation.pair else SimpleNamespace(
-        left=operation.left_asset,
-        right=operation.right_asset,
-    )
-
-    current_metrics_payload = {}
-    current_zscore = None
-    try:
-        metrics_now = compute_pair_window_metrics(pair=pair_ref, window=operation.window)
-    except Exception:
-        metrics_now = None
-
-    if isinstance(metrics_now, dict):
-        current_metrics_payload = metrics_now
-        current_zscore = metrics_now.get("zscore")
-
-    try:
-        raw_zscore_series = get_zscore_series(pair=pair_ref, window=operation.window)
-    except Exception:
-        raw_zscore_series = []
-
-    zscore_series_points: list[dict[str, object]] = []
-    for data_point in raw_zscore_series or []:
-        if data_point is None or len(data_point) < 2:
-            continue
-        dt_value, z_value = data_point
-        if z_value is None:
-            continue
-        if hasattr(dt_value, "strftime"):
-            label = dt_value.strftime("%d/%m")
-        else:
-            label = str(dt_value)
-        try:
-            numeric = float(z_value)
-        except (TypeError, ValueError):
-            continue
-        zscore_series_points.append({"label": label, "value": numeric})
-
-    entry_display = _metrics_display(entry_metrics_payload)
-    current_display = _metrics_display(current_metrics_payload)
-
-    entry_z_label = _fmt_metric(entry_zscore)
-    current_z_label = _fmt_metric(current_zscore)
-
-    z_delta = None
-    z_delta_label = "--"
-    if current_zscore is not None and entry_zscore is not None:
-        try:
-            z_delta = float(current_zscore) - float(entry_zscore)
-            z_delta_label = f"{z_delta:+.2f}"
-        except (TypeError, ValueError):
-            z_delta = None
-            z_delta_label = "--"
-
-    trade_info = operation.as_trade_dict()
-    trade_summary = {
-        "sell": {
-            "ticker": operation.sell_asset.ticker,
-            "quantity": operation.sell_quantity,
-            "price_label": _format_price(trade_info.get("sell", {}).get("price")),
-            "value_label": _format_money(trade_info.get("sell", {}).get("value")),
-        },
-        "buy": {
-            "ticker": operation.buy_asset.ticker,
-            "quantity": operation.buy_quantity,
-            "price_label": _format_price(trade_info.get("buy", {}).get("price")),
-            "value_label": _format_money(trade_info.get("buy", {}).get("value")),
-        },
-        "net_label": _format_money(trade_info.get("net")),
-        "capital_label": _format_money(trade_info.get("capital_allocated")),
-    }
-
-    entry_net_direction = ""
-    if operation.net_value is not None:
-        entry_net_direction = "recebe" if operation.net_value >= 0 else "paga"
-
-    entry_prices = {
-        "sell_qty_label": _fmt_int(operation.sell_quantity),
-        "buy_qty_label": _fmt_int(operation.buy_quantity),
-        "sell_price_label": _format_price(operation.sell_price),
-        "buy_price_label": _format_price(operation.buy_price),
-        "sell_total_label": _format_money(operation.sell_value),
-        "buy_total_label": _format_money(operation.buy_value),
-        "net_label": _format_money(operation.net_value),
-        "net_direction_label": entry_net_direction,
-    }
-
-    sell_current_price, sell_price_updated, sell_price_source = _build_current_asset_price(
-        operation.sell_asset
-    )
-    buy_current_price, buy_price_updated, buy_price_source = _build_current_asset_price(
-        operation.buy_asset
-    )
-    latest_price_update = max(
-        (dt for dt in (sell_price_updated, buy_price_updated) if dt is not None),
-        default=None,
-    )
-
-    money_quant = Decimal("0.01")
-    sell_qty_dec = Decimal(operation.sell_quantity)
-    buy_qty_dec = Decimal(operation.buy_quantity)
-    current_sell_total = (
-        (sell_current_price * sell_qty_dec).quantize(money_quant)
-        if sell_current_price is not None
-        else None
-    )
-    current_buy_total = (
-        (buy_current_price * buy_qty_dec).quantize(money_quant)
-        if buy_current_price is not None
-        else None
-    )
-
-    current_net_value = None
-    if current_sell_total is not None and current_buy_total is not None:
-        current_net_value = (current_sell_total - current_buy_total).quantize(money_quant)
-
-    sell_pl = None
-    if sell_current_price is not None:
-        sell_pl = ((operation.sell_price - sell_current_price) * sell_qty_dec).quantize(
-            money_quant
-        )
-
-    buy_pl = None
-    if buy_current_price is not None:
-        buy_pl = ((buy_current_price - operation.buy_price) * buy_qty_dec).quantize(
-            money_quant
-        )
-
-    pl_total = None
-    if sell_pl is not None and buy_pl is not None:
-        pl_total = (sell_pl + buy_pl).quantize(money_quant)
-
-    current_balance_value: Decimal | None = None
-    if pl_total is not None:
-        current_balance_value = pl_total
-    elif current_net_value is not None and operation.net_value is not None:
-        current_balance_value = (current_net_value - operation.net_value).quantize(
-            money_quant
-        )
-    elif current_net_value is not None:
-        current_balance_value = current_net_value
-    final_direction_label = ""
-    if current_balance_value is not None:
-        final_direction_label = "recebe" if current_balance_value >= 0 else "paga"
-
-    current_prices = {
-        "updated_label": _format_detail_updated(latest_price_update),
-        "sell": {
-            "price_label": _format_price(sell_current_price),
-            "source_label": _source_label(sell_price_source),
-        },
-        "buy": {
-            "price_label": _format_price(buy_current_price),
-            "source_label": _source_label(buy_price_source),
-        },
-        "sell_total_label": _format_money(current_sell_total),
-        "buy_total_label": _format_money(current_buy_total),
-        "sell_pl_label": _format_money(sell_pl),
-        "buy_pl_label": _format_money(buy_pl),
-        "net_label": _format_money(current_net_value),
-        "pl_total_label": _format_money(pl_total),
-        "final_label": _format_money(current_balance_value),
-        "final_direction_label": final_direction_label,
-    }
-
-    pnl_summary = _build_pnl_summary(
-        operation=operation,
-        sell_live_price=sell_current_price,
-        buy_live_price=buy_current_price,
-        sell_price=operation.sell_price,
-        buy_price=operation.buy_price,
-    )
-
-    try:
-        opened_local = timezone.localtime(operation.opened_at)
-    except Exception:
-        opened_local = operation.opened_at
-
-    return render(
-        request,
-        "core/operacao_encerrar.html",
-        {
-            "current": "home",
-            "title": f"Encerrar operacao {operation.sell_asset.ticker} x {operation.buy_asset.ticker}",
-        "operation": operation,
-        "entry_snapshot": entry_snapshot,
-        "latest_snapshot": latest_snapshot,
-        "entry_metrics": entry_display,
-        "current_metrics": current_display,
-        "entry_zscore_label": entry_z_label,
-        "current_zscore_label": current_z_label,
-        "z_delta_label": z_delta_label,
-        "is_delta_positive": bool(z_delta is not None and z_delta >= 0),
-        "capital_label": _format_money(operation.capital_allocated),
-        "net_label": _format_money(operation.net_value),
-        "net_direction": "recebe" if operation.net_value is not None and operation.net_value >= 0 else "paga",
-        "trade_info": trade_info,
-        "current_metrics_payload": current_metrics_payload,
-        "trade_summary": trade_summary,
-        "current_prices": current_prices,
-        "pnl_summary": pnl_summary,
-        "entry_prices": entry_prices,
-        "opened_label": opened_local.strftime("%d/%m/%Y %H:%M") if opened_local else "",
-        "operation_date_label": operation.operation_date.strftime("%d/%m/%Y") if operation.operation_date else "",
-        "window": operation.window,
-        "zscore_series_points": zscore_series_points,
-        },
-    )
-
-
-@login_required
-def operacao_refresh(request, pk: int):
-    if request.method != "GET":
-        return JsonResponse({"ok": False, "detail": "Metodo nao suportado."}, status=405)
-
-    operation = get_object_or_404(
-        Operation.objects.select_related(
-            "sell_asset",
-            "buy_asset",
-            "left_asset",
-            "right_asset",
-            "pair",
-        ).prefetch_related(
-            Prefetch(
-                "metric_snapshots",
-                queryset=OperationMetricSnapshot.objects.order_by("-reference_date"),
-            )
-        ),
-        pk=pk,
-        user=request.user,
-        status=Operation.STATUS_OPEN,
-    )
-
-    entry_snapshot = None
-    snapshots = list(operation.metric_snapshots.all())
-    for snap in snapshots:
-        if snap.snapshot_type == OperationMetricSnapshot.TYPE_OPEN:
-            entry_snapshot = snap
-            break
-
-    entry_zscore = entry_snapshot.zscore if entry_snapshot and entry_snapshot.zscore is not None else operation.entry_zscore
-
-    pair_ref = operation.pair if operation.pair else SimpleNamespace(
-        left=operation.left_asset,
-        right=operation.right_asset,
-    )
-
-    current_metrics_payload = {}
-    current_zscore = None
-    try:
-        metrics_now = compute_pair_window_metrics(pair=pair_ref, window=operation.window)
-    except Exception:
-        metrics_now = None
-
-    if isinstance(metrics_now, dict):
-        current_metrics_payload = metrics_now
-        raw_z = metrics_now.get("zscore")
-        if raw_z is not None:
-            try:
-                current_zscore = float(raw_z)
-            except (TypeError, ValueError):
-                current_zscore = None
-
-    current_metrics = _metrics_display(current_metrics_payload)
-    entry_z_label = _fmt_metric(entry_zscore)
-    current_z_label = _fmt_metric(current_zscore)
-
-    z_delta = None
-    z_delta_label = "--"
-    is_delta_positive = False
-    if entry_zscore is not None and current_zscore is not None:
-        try:
-            z_delta = float(current_zscore) - float(entry_zscore)
-            z_delta_label = f"{z_delta:+.2f}"
-            is_delta_positive = z_delta >= 0
-        except (TypeError, ValueError):
-            z_delta = None
-            z_delta_label = "--"
-            is_delta_positive = False
-
-    sell_price, sell_price_updated, sell_price_source = _build_current_asset_price(operation.sell_asset)
-    buy_price, buy_price_updated, buy_price_source = _build_current_asset_price(operation.buy_asset)
-    latest_price_update = max(
-        (dt for dt in (sell_price_updated, buy_price_updated) if dt is not None),
-        default=None,
-    )
-    money_quant = Decimal("0.01")
-    sell_qty_dec = Decimal(operation.sell_quantity)
-    buy_qty_dec = Decimal(operation.buy_quantity)
-    current_sell_total = (
-        (sell_price * sell_qty_dec).quantize(money_quant) if sell_price is not None else None
-    )
-    current_buy_total = (
-        (buy_price * buy_qty_dec).quantize(money_quant) if buy_price is not None else None
-    )
-
-    current_net_value = None
-    if current_sell_total is not None and current_buy_total is not None:
-        current_net_value = (current_sell_total - current_buy_total).quantize(money_quant)
-
-    sell_pl = None
-    if sell_price is not None:
-        sell_pl = ((operation.sell_price - sell_price) * sell_qty_dec).quantize(money_quant)
-
-    buy_pl = None
-    if buy_price is not None:
-        buy_pl = ((buy_price - operation.buy_price) * buy_qty_dec).quantize(money_quant)
-
-    pl_total = None
-    if sell_pl is not None and buy_pl is not None:
-        pl_total = (sell_pl + buy_pl).quantize(money_quant)
-
-    current_balance_value: Decimal | None = None
-    if pl_total is not None:
-        current_balance_value = pl_total
-    elif current_net_value is not None and operation.net_value is not None:
-        current_balance_value = (current_net_value - operation.net_value).quantize(money_quant)
-    elif current_net_value is not None:
-        current_balance_value = current_net_value
-    final_direction_label = ""
-    if current_balance_value is not None:
-        final_direction_label = "recebe" if current_balance_value >= 0 else "paga"
-
-    current_prices = {
-        "updated_label": _format_detail_updated(latest_price_update),
-        "sell": {
-            "price_label": _format_price(sell_price),
-            "source_label": _source_label(sell_price_source),
-        },
-        "buy": {
-            "price_label": _format_price(buy_price),
-            "source_label": _source_label(buy_price_source),
-        },
-        "sell_total_label": _format_money(current_sell_total),
-        "buy_total_label": _format_money(current_buy_total),
-        "sell_pl_label": _format_money(sell_pl),
-        "buy_pl_label": _format_money(buy_pl),
-        "net_label": _format_money(current_net_value),
-        "pl_total_label": _format_money(pl_total),
-        "final_label": _format_money(current_balance_value),
-        "final_direction_label": final_direction_label,
-    }
-
-    pnl_summary = _build_pnl_summary(
-        operation=operation,
-        sell_live_price=sell_price,
-        buy_live_price=buy_price,
-        sell_price=operation.sell_price,
-        buy_price=operation.buy_price,
-    )
-
-    return JsonResponse(
-        {
-            "ok": True,
-            "current_metrics": current_metrics,
-            "current_zscore_label": current_z_label,
-            "current_zscore_value": current_zscore,
-            "entry_zscore_label": entry_z_label,
-            "z_delta_label": z_delta_label,
-            "is_delta_positive": is_delta_positive,
-            "current_prices": current_prices,
-            "pnl_summary": pnl_summary,
-        }
-    )
-
-
-def teste_mt5(request):
-    symbol = request.GET.get("symbol", "PETR4")
-    try:
-        price = get_latest_price(symbol)
-        return JsonResponse({"ok": True, "symbol": symbol, "price": price})
-    except MT5BridgeError as exc:
-        return JsonResponse({"ok": False, "error": str(exc)}, status=502)

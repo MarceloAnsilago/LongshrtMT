@@ -18,7 +18,6 @@ from django.views.generic import ListView, TemplateView
 from django.db import close_old_connections
 
 from acoes.models import Asset
-from mt5_bridge_client.mt5client import fetch_last_close_d1, MT5BridgeError
 from .models import QuoteDaily, MissingQuoteLog
 
 from longshort.services.quotes import (
@@ -96,26 +95,6 @@ class QuotesHomeView(LoginRequiredMixin, TemplateView):
         ctx["pivot_rows"] = pivot_ctx["rows"]
         ctx["ticker_input"] = ",".join(tickers_filter or [])
 
-        bridge_error_entries = []
-        bridge_errors = 0
-        assets_for_bridge = Asset.objects.filter(is_active=True).order_by("ticker")[:12]
-        for asset in assets_for_bridge:
-            preco_d1 = None
-            erro = None
-            try:
-                preco_d1 = fetch_last_close_d1(asset.ticker)
-            except MT5BridgeError as exc:
-                erro = str(exc)
-                bridge_errors += 1
-                bridge_error_entries.append({"asset": asset, "erro": erro})
-
-        if bridge_errors:
-            messages.warning(
-                self.request,
-                "Algumas cotações D1 não puderam ser carregadas via MT5 Bridge. Confira os logs.",
-            )
-
-        ctx["bridge_error_entries"] = bridge_error_entries
         return ctx
 
 
@@ -144,11 +123,11 @@ def _prune_quotes_over_limit(assets, *, max_rows: int = 210) -> int:
 @login_required
 def update_quotes(request: HttpRequest):
     assets = list(Asset.objects.filter(is_active=True).order_by("id"))
-    n_assets, n_rows = bulk_update_quotes(assets, period="2y", interval="1d")
+    n_assets, _ = bulk_update_quotes(assets, period="2y", interval="1d")
     deleted = _prune_quotes_over_limit(assets, max_rows=210)
     messages.success(
         request,
-        f"Cota??es atualizadas: {n_assets} ativos, {n_rows} linhas inseridas, {deleted} removidas.",
+        f"Cotacoes sincronizadas do Supabase: {n_assets} ativos, {deleted} removidas.",
     )
     return redirect(reverse_lazy("cotacoes:home"))
 
@@ -199,11 +178,11 @@ def update_quotes_ajax(request: HttpRequest):
 
     total_assets = len(assets)
     _progress_set(request.user.id, ticker="", index=0, total=total_assets, status="starting", rows=0)
-    n_assets, n_rows = bulk_update_quotes(assets, period="2y", interval="1d", progress_cb=progress_cb)
+    n_assets, _ = bulk_update_quotes(assets, period="2y", interval="1d", progress_cb=progress_cb)
     deleted = _prune_quotes_over_limit(assets, max_rows=210)
     messages.success(
         request,
-        f"Cota??es atualizadas: {n_assets} ativos, {n_rows} linhas inseridas, {deleted} removidas.",
+        f"Cotacoes sincronizadas do Supabase: {n_assets} ativos, {deleted} removidas.",
     )
     _progress_set(
         request.user.id,
@@ -211,24 +190,23 @@ def update_quotes_ajax(request: HttpRequest):
         index=n_assets,
         total=total_assets,
         status="done",
-        rows=n_rows,
+        rows=0,
         deleted=deleted,
     )
-    return JsonResponse({"ok": True, "assets": n_assets, "rows": n_rows, "deleted": deleted})
+    return JsonResponse({"ok": True, "assets": n_assets, "rows": 0, "deleted": deleted})
 
 
 @login_required
 def update_live_quotes_view(request: HttpRequest):
     """
-    View que atualiza os preços ao vivo (intervalo de 5 minutos via Yahoo Finance)
-    e salva na tabela cotacoes_quotelive.
+    View que valida as cotacoes ao vivo no Supabase.
     """
     from longshort.services.quotes import update_live_quotes
 
     assets = Asset.objects.filter(is_active=True).order_by("id")
     n_updated, n_total = update_live_quotes(assets)
 
-    messages.success(request, f"Cotações ao vivo atualizadas: {n_updated}/{n_total} ativos.")
+    messages.success(request, f"Cotacoes ao vivo verificadas: {n_updated}/{n_total} ativos.")
     return redirect("cotacoes:home")
 
 
@@ -387,9 +365,9 @@ def faltantes_fetch_one(request, ticker: str, dt: str):
 
     ok = try_fetch_single_date(asset, d, use_stooq=True)
     if ok:
-        messages.success(request, f"{ticker} {d} inserido com sucesso.")
+        messages.success(request, f"{ticker} {d} ja existe no banco.")
     else:
-        messages.warning(request, f"{ticker} {d}: não há dado nas fontes.")
+        messages.warning(request, f"{ticker} {d}: nao ha dado no Supabase.")
     return redirect("cotacoes:faltantes_detail", ticker=ticker)
 
 @require_http_methods(["POST"])
