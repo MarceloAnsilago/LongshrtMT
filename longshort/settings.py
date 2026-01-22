@@ -122,48 +122,24 @@ TEMPLATES = [
 WSGI_APPLICATION = 'longshort.wsgi.application'
 
 
-# Database (Supabase Session Pooler / IPv4-friendly)
-# ----------------------------------
-DB_NAME = os.environ.get("DB_NAME")
-DB_USER = os.environ.get("DB_USER")
-DB_PASSWORD = os.environ.get("DB_PASSWORD")
-DB_HOST = os.environ.get("DB_HOST")
-DB_PORT = os.environ.get("DB_PORT")
+# Database
+DATABASE_URL = os.environ.get("DATABASE_URL")
+DJANGO_ENV = os.environ.get("DJANGO_ENV", "").strip().lower()
 
-
-def _env_present(*values: str | None) -> bool:
-    return all(value is not None and value.strip() for value in values)
-
-
-def _env_has_placeholder(value: str | None) -> bool:
-    if not value:
-        return False
-    lowered = value.lower()
-    return "<" in lowered or "project_ref" in lowered or "coloque" in lowered
-
-if _env_present(DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT):
-    if _env_has_placeholder(DB_USER) or _env_has_placeholder(DB_PASSWORD) or _env_has_placeholder(DB_HOST):
-        raise ValueError("Database env vars must be real values, not placeholders.")
+if DATABASE_URL:
     DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": DB_NAME,
-            "USER": DB_USER,
-            "PASSWORD": DB_PASSWORD,
-            "HOST": DB_HOST,
-            "PORT": DB_PORT,
-            "OPTIONS": {
-                "sslmode": "require",
-            },
-            "CONN_MAX_AGE": 0,
-        }
+        "default": dj_database_url.config(
+            default=DATABASE_URL,
+            conn_max_age=600,
+        )
     }
+elif DJANGO_ENV == "production":
+    raise ValueError("DATABASE_URL is required in production to avoid SQLite on ephemeral storage.")
 else:
     DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
+        "default": dj_database_url.config(
+            default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        )
     }
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -192,12 +168,35 @@ USE_TZ = True
 
 # Static files
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 LOGIN_REDIRECT_URL = 'acoes:lista'
 LOGOUT_REDIRECT_URL = 'core:home'
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+        "django.security": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+}

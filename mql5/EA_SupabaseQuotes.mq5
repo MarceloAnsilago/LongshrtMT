@@ -9,6 +9,52 @@ input string SymbolsCsv = "PETR4,VALE3";
 input bool SendDailyClose = true;
 
 string g_headers = "";
+string g_cache_symbols[];
+int g_cache_ids[];
+
+string FormatIso8601Utc()
+{
+   string ts = TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS);
+   ts = StringReplace(ts, ".", "-");
+   ts = StringReplace(ts, " ", "T");
+   return ts + "Z";
+}
+
+string FormatIsoDate(datetime value)
+{
+   string dateStr = TimeToString(value, TIME_DATE);
+   return StringReplace(dateStr, ".", "-");
+}
+
+int CacheGetId(string symbol)
+{
+   int size = ArraySize(g_cache_symbols);
+   for (int i = 0; i < size; i++)
+   {
+      if (g_cache_symbols[i] == symbol)
+      {
+         return g_cache_ids[i];
+      }
+   }
+   return 0;
+}
+
+void CachePutId(string symbol, int assetId)
+{
+   int size = ArraySize(g_cache_symbols);
+   for (int i = 0; i < size; i++)
+   {
+      if (g_cache_symbols[i] == symbol)
+      {
+         g_cache_ids[i] = assetId;
+         return;
+      }
+   }
+   ArrayResize(g_cache_symbols, size + 1);
+   ArrayResize(g_cache_ids, size + 1);
+   g_cache_symbols[size] = symbol;
+   g_cache_ids[size] = assetId;
+}
 
 int OnInit()
 {
@@ -127,7 +173,7 @@ bool GetLastDailyRate(string symbol, MqlRates &rate)
 bool UpsertQuoteLive(int assetId, double price)
 {
    string endpoint = SupabaseUrl + "/rest/v1/cotacoes_quotelive?on_conflict=asset_id";
-   string updatedAt = TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS);
+   string updatedAt = FormatIso8601Utc();
    string body = "{"
       "\"asset_id\":" + IntegerToString(assetId) + ","
       "\"price\":" + DoubleToString(price, 6) + ","
@@ -140,7 +186,7 @@ bool UpsertQuoteLive(int assetId, double price)
 bool UpsertQuoteDaily(int assetId, MqlRates rate)
 {
    string endpoint = SupabaseUrl + "/rest/v1/cotacoes_quotedaily?on_conflict=asset_id,date";
-   string dateStr = TimeToString(rate.time, TIME_DATE);
+   string dateStr = FormatIsoDate(rate.time);
    string body = "{"
       "\"asset_id\":" + IntegerToString(assetId) + ","
       "\"date\":\"" + dateStr + "\","
@@ -168,7 +214,8 @@ bool HttpPost(string url, string body)
       return true;
    }
 
-   Print("HTTP error ", code, " for ", url, " body=", body);
+   string response = CharArrayToString(result);
+   Print("HTTP error ", code, " for ", url, " body=", body, " response=", response, " headers=", result_headers);
    return false;
 }
 
@@ -191,12 +238,19 @@ int FetchOpenOperationSymbols(string &out[], int limit)
 
 int FetchAssetId(string symbol)
 {
+   int cached = CacheGetId(symbol);
+   if (cached > 0)
+      return cached;
+
    string url = SupabaseUrl + "/rest/v1/acoes_asset?select=id&ticker=eq." + symbol;
    string response = HttpGet(url);
    if (response == "")
       return 0;
 
-   return ParseSingleId(response);
+   int assetId = ParseSingleId(response);
+   if (assetId > 0)
+      CachePutId(symbol, assetId);
+   return assetId;
 }
 
 int FetchTickersByAssetIds(int &ids[], int idCount, string &out[], int limit)
@@ -227,24 +281,158 @@ string HttpGet(string url)
    {
       return CharArrayToString(result);
    }
-   Print("HTTP error ", code, " for ", url);
+   string response = CharArrayToString(result);
+   Print("HTTP error ", code, " for ", url, " response=", response, " headers=", result_headers);
    return "";
+}
+
+bool ExtractIntValue(string json, string key, int start, int &value, int &nextPos)
+{
+   int keyPos = StringFind(json, key, start);
+   if (keyPos < 0)
+      return false;
+
+   int colon = StringFind(json, ":", keyPos + StringLen(key));
+   if (colon < 0)
+      return false;
+
+   int i = colon + 1;
+   int len = StringLen(json);
+   while (i < len && StringGetCharacter(json, i) <= ' ')
+      i++;
+
+   bool neg = false;
+   if (i < len && StringGetCharacter(json, i) == '-')
+   {
+      neg = true;
+      i++;
+   }
+
+   int startDigits = i;
+   int result = 0;
+   while (i < len)
+   {
+      ushort ch = StringGetCharacter(json, i);
+      if (ch < '0' || ch > '9')
+         break;
+      result = result * 10 + (int)(ch - '0');
+      i++;
+   }
+
+   if (i == startDigits)
+      return false;
+
+   value = neg ? -result : result;
+   nextPos = i;
+   return true;
+}
+
+bool ExtractStringValue(string json, string key, int start, string &value, int &nextPos)
+{
+   int keyPos = StringFind(json, key, start);
+   if (keyPos < 0)
+      return false;
+
+   int colon = StringFind(json, ":", keyPos + StringLen(key));
+   if (colon < 0)
+      return false;
+
+   int i = colon + 1;
+   int len = StringLen(json);
+   while (i < len && StringGetCharacter(json, i) <= ' ')
+      i++;
+
+   if (i >= len || StringGetCharacter(json, i) != '"')
+      return false;
+
+   int startQuote = i + 1;
+   int endQuote = StringFind(json, "\"", startQuote);
+   if (endQuote < 0)
+      return false;
+
+   value = StringSubstr(json, startQuote, endQuote - startQuote);
+   nextPos = endQuote + 1;
+   return true;
+}
+
+bool AddUniqueInt(int &values[], int &count, int limit, int value)
+{
+   for (int i = 0; i < count; i++)
+   {
+      if (values[i] == value)
+         return false;
+   }
+   if (count >= limit)
+      return false;
+
+   ArrayResize(values, count + 1);
+   values[count] = value;
+   count++;
+   return true;
+}
+
+bool AddUniqueString(string &values[], int &count, int limit, string value)
+{
+   for (int i = 0; i < count; i++)
+   {
+      if (values[i] == value)
+         return false;
+   }
+   if (count >= limit)
+      return false;
+
+   ArrayResize(values, count + 1);
+   values[count] = value;
+   count++;
+   return true;
 }
 
 int ParseSingleId(string json)
 {
-   // TODO: parse JSON properly.
+   int value = 0;
+   int nextPos = 0;
+   if (ExtractIntValue(json, "\"id\"", 0, value, nextPos))
+      return value;
    return 0;
 }
 
 int ParseAssetIdsFromOperations(string json, int &ids[], int limit)
 {
-   // TODO: parse JSON properly.
-   return 0;
+   int count = 0;
+   ArrayResize(ids, 0);
+
+   int pos = 0;
+   int value = 0;
+   int nextPos = 0;
+   while (ExtractIntValue(json, "\"sell_asset_id\"", pos, value, nextPos))
+   {
+      AddUniqueInt(ids, count, limit, value);
+      pos = nextPos;
+   }
+
+   pos = 0;
+   while (ExtractIntValue(json, "\"buy_asset_id\"", pos, value, nextPos))
+   {
+      AddUniqueInt(ids, count, limit, value);
+      pos = nextPos;
+   }
+
+   return count;
 }
 
 int ParseTickers(string json, string &out[], int limit)
 {
-   // TODO: parse JSON properly.
-   return 0;
+   int count = 0;
+   ArrayResize(out, 0);
+
+   int pos = 0;
+   string ticker = "";
+   int nextPos = 0;
+   while (ExtractStringValue(json, "\"ticker\"", pos, ticker, nextPos))
+   {
+      AddUniqueString(out, count, limit, ticker);
+      pos = nextPos;
+   }
+
+   return count;
 }

@@ -36,6 +36,11 @@ urlpatterns = [
         login_required(views.operacao_encerrar),
         name="operacao_encerrar",
     ),
+    path(
+        "operacoes/<int:pk>/refresh/",
+        login_required(views.operacao_refresh),
+        name="operacao_refresh",
+    ),
     path("encerradas/", login_required(views.encerradas), name="encerradas"),
     path("config/", views.config, name="config"),
     path("faltantes/", views.faltantes, name="faltantes"),
