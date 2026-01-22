@@ -31,7 +31,7 @@ from longshort.services.metrics import (
     calcular_proporcao_long_short,
     get_zscore_series,
 )
-from longshort.services.quotes import fetch_latest_price, update_live_quotes
+from longshort.services.quotes import update_live_quotes
 from pairs.constants import DEFAULT_BASE_WINDOW, DEFAULT_WINDOWS
 from pairs.forms import UserMetricsConfigForm
 from pairs.models import Pair, UserMetricsConfig
@@ -139,55 +139,7 @@ def _build_home_operations_payload(request):
         label = "dia" if days == 1 else "dias"
         return f"{days} {label}"
 
-    yahoo_price_cache: dict[str, tuple[Decimal | None, bool]] = {}
     manual_refresh_required = False
-
-    def _normalize_ticker(value: str | None) -> str:
-        return (value or "").strip().upper()
-
-    def _try_fetch_yahoo_price(ticker_norm: str) -> tuple[Decimal | None, bool]:
-        if not ticker_norm:
-            return None, False
-        cached = yahoo_price_cache.get(ticker_norm)
-        if cached is not None:
-            return cached
-        price: Decimal | None = None
-        error = False
-        try:
-            px = fetch_latest_price(ticker_norm)
-            if px is not None:
-                price = Decimal(str(px))
-        except Exception:
-            error = True
-        yahoo_price_cache[ticker_norm] = (price, error)
-        return price, error
-
-    def _refresh_live_price_with_yahoo(
-        asset: Asset | None,
-        current_price: Decimal | None,
-        current_updated,
-        *,
-        force: bool = False,
-    ):
-        nonlocal manual_refresh_required
-        if not asset:
-            return current_price, current_updated
-        if not force and current_price is not None:
-            return current_price, current_updated
-        ticker_norm = _normalize_ticker(getattr(asset, "ticker", None))
-        if not ticker_norm:
-            return current_price, current_updated
-        yahoo_price, _ = _try_fetch_yahoo_price(ticker_norm)
-        if yahoo_price is not None:
-            current_price = yahoo_price
-            current_updated = timezone.now()
-            try:
-                QuoteLive.objects.update_or_create(asset=asset, defaults={"price": float(yahoo_price)})
-            except Exception:
-                pass
-        else:
-            manual_refresh_required = True
-        return current_price, current_updated
 
     money_quant = Decimal("0.01")
 
@@ -296,13 +248,28 @@ def _build_home_operations_payload(request):
             return price, updated
 
         sell_live_price, sell_updated = _build_live_price(operation.sell_asset)
-        sell_live_price, sell_updated = _refresh_live_price_with_yahoo(
-            operation.sell_asset, sell_live_price, sell_updated
-        )
+        if sell_live_price is None:
+            latest_daily = (
+                QuoteDaily.objects.filter(asset=operation.sell_asset)
+                .values("close", "date")
+                .order_by("-date")
+                .first()
+            )
+            if latest_daily and latest_daily["close"] is not None:
+                sell_live_price = _to_decimal(latest_daily["close"])
+                sell_updated = latest_daily["date"]
+
         buy_live_price, buy_updated = _build_live_price(operation.buy_asset)
-        buy_live_price, buy_updated = _refresh_live_price_with_yahoo(
-            operation.buy_asset, buy_live_price, buy_updated
-        )
+        if buy_live_price is None:
+            latest_daily = (
+                QuoteDaily.objects.filter(asset=operation.buy_asset)
+                .values("close", "date")
+                .order_by("-date")
+                .first()
+            )
+            if latest_daily and latest_daily["close"] is not None:
+                buy_live_price = _to_decimal(latest_daily["close"])
+                buy_updated = latest_daily["date"]
 
         sell_qty_dec = Decimal(operation.sell_quantity)
         buy_qty_dec = Decimal(operation.buy_quantity)
@@ -1105,10 +1072,10 @@ def _build_pnl_summary(operation: Operation, sell_live_price, buy_live_price, se
 
 
 def _source_label(src: str | None) -> str:
-    if src == "yahoo":
-        return "Yahoo (agora)"
-    if src == "cache":
-        return "Yahoo (cache)"
+    if src == "live":
+        return "Supabase (ao vivo)"
+    if src == "daily":
+        return "Supabase (diario)"
     return ""
 
 
@@ -1126,30 +1093,22 @@ def _build_current_asset_price(asset: Asset | None) -> tuple[Decimal | None, obj
             price = None
         else:
             updated = getattr(live_quote, "updated_at", None)
-            source = "cache"
+            source = "live"
     if price is None:
-        ticker = (getattr(asset, "ticker", "") or "").strip().upper()
-        if ticker:
-            yahoo_price = None
+        latest_quote = (
+            QuoteDaily.objects.filter(asset=asset)
+            .values("close", "date")
+            .order_by("-date")
+            .first()
+        )
+        if latest_quote and latest_quote["close"] is not None:
             try:
-                yahoo_price = fetch_latest_price(ticker)
-            except Exception:
-                yahoo_price = None
-            if yahoo_price is not None:
-                try:
-                    price = Decimal(str(yahoo_price))
-                except (TypeError, ValueError, InvalidOperation):
-                    price = None
-                else:
-                    updated = timezone.now()
-                    source = "yahoo"
-                    try:
-                        QuoteLive.objects.update_or_create(
-                            asset=asset,
-                            defaults={"price": float(price)},
-                        )
-                    except Exception:
-                        pass
+                price = Decimal(str(latest_quote["close"]))
+            except (TypeError, ValueError, InvalidOperation):
+                price = None
+            else:
+                updated = latest_quote["date"]
+                source = "daily"
     return price, updated, source
 
 
@@ -1267,23 +1226,7 @@ def operacoes(request):
             price = getattr(live_quote, "price", None)
             updated_at = getattr(live_quote, "updated_at", None)
             if price is not None:
-                price_source = "cache"
-
-        yahoo_price = None
-        yahoo_error = False
-        if ticker_norm:
-            try:
-                yahoo_price = fetch_latest_price(ticker_norm)
-            except Exception:
-                yahoo_price = None
-                yahoo_error = True
-
-        if yahoo_price is not None:
-            price = yahoo_price
-            updated_at = timezone.now()
-            price_source = "yahoo"
-            if asset_obj:
-                QuoteLive.objects.update_or_create(asset=asset_obj, defaults={"price": yahoo_price})
+                price_source = "live"
 
         if price is None and asset_obj:
             latest_quote = (
@@ -1306,11 +1249,9 @@ def operacoes(request):
             "price_label": f"R$ {number_format(price, 2)}" if price is not None else None,
             "source": price_source,
             "source_label": (
-                "Yahoo (agora)"
-                if price_source == "yahoo"
-                else "Yahoo (ultima leitura)"
-                if price_source == "cache"
-                else "Histórico (fechamento)"
+                "Supabase (ao vivo)"
+                if price_source == "live"
+                else "Supabase (diario)"
                 if price_source == "daily"
                 else ""
             ),
@@ -1320,10 +1261,7 @@ def operacoes(request):
         }
 
         if price is None and ticker_norm:
-            if yahoo_error:
-                info["error_label"] = "Nao foi possivel contatar o Yahoo Finance agora."
-            else:
-                info["error_label"] = "Yahoo nao retornou cotacao para este ticker."
+            info["error_label"] = "Sem cotacao no Supabase para este ticker."
 
         return info
 

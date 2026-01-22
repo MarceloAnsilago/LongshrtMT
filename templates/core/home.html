@@ -445,6 +445,11 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     const normalized = (direction ?? "").trim();
+    const currentValue = badge.dataset.liveValue ?? "";
+    if (currentValue === normalized) {
+      return;
+    }
+    badge.dataset.liveValue = normalized;
     badge.textContent = normalized || "--";
     removeBadgeClasses(badge);
     badge.classList.add("text-capitalize", "small", "badge");
