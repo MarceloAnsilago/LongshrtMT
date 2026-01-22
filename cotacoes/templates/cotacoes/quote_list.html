@@ -9,7 +9,7 @@
         <small class="text-muted">Sincronizar dados do Supabase e revisar faltantes.</small>
       </div>
 
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 align-items-center">
         <!-- BOTÃO COM SPINNER -->
         <a id="btnUpdate" class="btn btn-outline-primary" href="{% url 'cotacoes:update' %}"
            data-update-url="{% url 'cotacoes:update_ajax' %}"
@@ -18,6 +18,9 @@
           <i class="bi bi-arrow-clockwise" id="icoUpdate"></i>
           <span id="txtUpdate">Atualizar Cotacoes</span>
         </a>
+        <div class="small text-muted" id="lastUpdateLabel">
+          &Uacute;ltima cota&ccedil;&atilde;o: {{ last_quote_label }} &bull; Atualizado: {{ last_refresh_label }}
+        </div>
         <div id="quotesProgressWrap" class="d-none align-self-center" style="min-width:220px;">
           <div class="progress" style="height:8px;">
             <div id="quotesProgressBar" class="progress-bar" role="progressbar"
@@ -166,6 +169,7 @@ document.addEventListener('DOMContentLoaded', function () {
   const progressWrap = document.getElementById('quotesProgressWrap');
   const progressBar = document.getElementById('quotesProgressBar');
   const progressLabel = document.getElementById('quotesProgressLabel');
+  const lastUpdateLabel = document.getElementById('lastUpdateLabel');
   const updateUrl = btn.dataset.updateUrl;
   const progressUrl = btn.dataset.progressUrl;
 
@@ -208,6 +212,11 @@ document.addEventListener('DOMContentLoaded', function () {
       const ticker = data.ticker ? ` ${data.ticker}` : '';
       const status = data.status ? data.status : 'processing';
       progressLabel.textContent = `${status}${ticker} (${index}/${total}) rows=${rows}`;
+    }
+    if (lastUpdateLabel && (data.last_refresh_label || data.last_quote_label)) {
+      const quote = data.last_quote_label || '--';
+      const refresh = data.last_refresh_label || '--';
+      lastUpdateLabel.textContent = `Ultima cotacao: ${quote} • Atualizado: ${refresh}`;
     }
     return data.status === 'done';
   };

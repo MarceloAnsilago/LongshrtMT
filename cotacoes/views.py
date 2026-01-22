@@ -16,12 +16,12 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_GET, require_POST
 from django.views.generic import ListView, TemplateView
 from django.db import close_old_connections
+from django.db.models import Max
 
 from acoes.models import Asset
 from .models import QuoteDaily, MissingQuoteLog
 
 from longshort.services.quotes import (
-    bulk_update_quotes,
     scan_all_assets_and_fix,
     find_missing_dates_for_asset,
     try_fetch_single_date,
@@ -94,6 +94,9 @@ class QuotesHomeView(LoginRequiredMixin, TemplateView):
         ctx["pivot_cols"] = pivot_ctx["cols"]
         ctx["pivot_rows"] = pivot_ctx["rows"]
         ctx["ticker_input"] = ",".join(tickers_filter or [])
+        ctx["last_refresh_label"] = _get_last_refresh_label(self.request.user.id)
+        latest_date = QuoteDaily.objects.aggregate(last=Max("date"))["last"]
+        ctx["last_quote_label"] = latest_date.strftime("%d/%m/%Y") if latest_date else "--"
 
         return ctx
 
@@ -105,29 +108,16 @@ class QuoteDailyListView(LoginRequiredMixin, ListView):
     paginate_by = 100
 
 
-def _prune_quotes_over_limit(assets, *, max_rows: int = 210) -> int:
-    total_deleted = 0
-    for asset in assets:
-        ids = list(
-            QuoteDaily.objects.filter(asset=asset)
-            .order_by("-date")
-            .values_list("id", flat=True)[max_rows:]
-        )
-        if not ids:
-            continue
-        deleted, _ = QuoteDaily.objects.filter(id__in=ids).delete()
-        total_deleted += deleted
-    return total_deleted
-
-
 @login_required
 def update_quotes(request: HttpRequest):
-    assets = list(Asset.objects.filter(is_active=True).order_by("id"))
-    n_assets, _ = bulk_update_quotes(assets, period="2y", interval="1d")
-    deleted = _prune_quotes_over_limit(assets, max_rows=210)
+    latest_date = QuoteDaily.objects.aggregate(last=Max("date"))["last"]
+    refreshed_at = timezone.now()
+    cache.set(LAST_REFRESH_KEY.format(uid=request.user.id), refreshed_at, timeout=60 * 60 * 24)
+    latest_label = latest_date.strftime("%d/%m/%Y") if latest_date else "--"
+    refreshed_label = _format_refresh_dt(refreshed_at)
     messages.success(
         request,
-        f"Cotacoes sincronizadas do Supabase: {n_assets} ativos, {deleted} removidas.",
+        f"Ultima cotacao diaria do Supabase: {latest_label}. Atualizado em {refreshed_label}.",
     )
     return redirect(reverse_lazy("cotacoes:home"))
 
@@ -153,6 +143,32 @@ def clear_logs(request: HttpRequest):
 
 
 PROGRESS_KEY = "quotes_progress_user_{uid}"
+LAST_REFRESH_KEY = "quotes_last_refresh_user_{uid}"
+
+
+def _format_refresh_dt(dt_value) -> str:
+    if not dt_value:
+        return "--"
+    try:
+        localized = timezone.localtime(dt_value)
+    except Exception:
+        localized = dt_value
+    try:
+        return localized.strftime("%d/%m %H:%M")
+    except Exception:
+        return "--"
+
+
+def _get_last_refresh_label(user_id: int) -> str:
+    cached = cache.get(LAST_REFRESH_KEY.format(uid=user_id))
+    if not cached:
+        return "--"
+    if isinstance(cached, str):
+        try:
+            cached = timezone.datetime.fromisoformat(cached)
+        except Exception:
+            return "--"
+    return _format_refresh_dt(cached)
 
 def _progress_set(user_id: int, **kwargs):
     key = PROGRESS_KEY.format(uid=user_id)
@@ -171,29 +187,29 @@ def quotes_progress(request: HttpRequest):
 @login_required
 @require_POST
 def update_quotes_ajax(request: HttpRequest):
-    assets = list(Asset.objects.filter(is_active=True).order_by("id"))
-
-    def progress_cb(sym: str, idx: int, total: int, status: str, rows: int):
-        _progress_set(request.user.id, ticker=sym, index=idx, total=total, status=status, rows=rows)
-
-    total_assets = len(assets)
-    _progress_set(request.user.id, ticker="", index=0, total=total_assets, status="starting", rows=0)
-    n_assets, _ = bulk_update_quotes(assets, period="2y", interval="1d", progress_cb=progress_cb)
-    deleted = _prune_quotes_over_limit(assets, max_rows=210)
-    messages.success(
-        request,
-        f"Cotacoes sincronizadas do Supabase: {n_assets} ativos, {deleted} removidas.",
-    )
+    latest_date = QuoteDaily.objects.aggregate(last=Max("date"))["last"]
+    refreshed_at = timezone.now()
+    cache.set(LAST_REFRESH_KEY.format(uid=request.user.id), refreshed_at, timeout=60 * 60 * 24)
+    latest_label = latest_date.strftime("%d/%m/%Y") if latest_date else "--"
+    refreshed_label = _format_refresh_dt(refreshed_at)
     _progress_set(
         request.user.id,
         ticker="",
-        index=n_assets,
-        total=total_assets,
+        index=1,
+        total=1,
         status="done",
         rows=0,
-        deleted=deleted,
+        deleted=0,
+        last_refresh_label=refreshed_label,
+        last_quote_label=latest_label,
     )
-    return JsonResponse({"ok": True, "assets": n_assets, "rows": 0, "deleted": deleted})
+    return JsonResponse(
+        {
+            "ok": True,
+            "last_quote_label": latest_label,
+            "last_refresh_label": refreshed_label,
+        }
+    )
 
 
 @login_required
