@@ -73,7 +73,6 @@ INSTALLED_APPS = [
     'acoes',
     'cotacoes',
     'operacoes',
-    'app_pares',
 
     # Extras
     'django_htmx',
@@ -124,23 +123,16 @@ WSGI_APPLICATION = 'longshort.wsgi.application'
 
 # Database
 DATABASE_URL = os.environ.get("DATABASE_URL")
-DJANGO_ENV = os.environ.get("DJANGO_ENV", "").strip().lower()
 
-if DATABASE_URL:
-    DATABASES = {
-        "default": dj_database_url.config(
-            default=DATABASE_URL,
-            conn_max_age=600,
-        )
-    }
-elif DJANGO_ENV == "production":
-    raise ValueError("DATABASE_URL is required in production to avoid SQLite on ephemeral storage.")
-else:
-    DATABASES = {
-        "default": dj_database_url.config(
-            default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
-        )
-    }
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL is required; SQLite is disabled for this project.")
+
+DATABASES = {
+    "default": dj_database_url.config(
+        default=DATABASE_URL,
+        conn_max_age=600,
+    )
+}
 
 AUTH_PASSWORD_VALIDATORS = [
     {
