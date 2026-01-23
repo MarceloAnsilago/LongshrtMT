@@ -506,7 +506,7 @@
                           )
                         </span>
                         <span
-                          class="fw-semibold {% if item.pnl_ready %}{% if item.pnl_positive %}text-success{% elif item.pnl_negative %}text-danger{% endif %}{% endif %}"
+                          class="fw-semibold {% if item.pnl_ready %}{% if item.pnl_positive %}text-primary{% elif item.pnl_negative %}text-danger{% endif %}{% endif %}"
                           data-live-field="pl_total_label"
                           data-op-id="{{ item.operation.pk }}">
                           {{ item.current.prices.pl_total_label }}
