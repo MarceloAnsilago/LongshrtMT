@@ -8,7 +8,7 @@ from django.db.models import Max
 from django.utils import timezone
 
 from acoes.models import Asset
-from cotacoes.models import QuoteDaily, MissingQuoteLog, QuoteLive
+from cotacoes.models import QuoteDaily, QuoteLive
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +31,6 @@ def _symbol_for_asset(asset) -> Optional[str]:
     if symbol:
         return symbol
     return _normalize_symbol(getattr(asset, "ticker_yf", None))
-
-
-def _log_missing_quote(asset, reason: str, detail: str, *, date=None) -> None:
-    try:
-        MissingQuoteLog.objects.create(
-            asset=asset,
-            date=date,
-            reason=reason,
-            detail=str(detail),
-        )
-    except Exception:
-        logger.exception("Failed to log MissingQuoteLog for %s", asset)
 
 
 def _prune_old_quotes(asset, *, max_rows: int = MAX_QUOTES_PER_ASSET) -> int:
@@ -82,14 +70,14 @@ def bulk_update_quotes(
 
         symbol = _symbol_for_asset(asset)
         if not symbol:
-            _log_missing_quote(asset, "invalid_symbol", "Ticker empty or invalid")
+            logger.info("Skipping %s: ticker empty or invalid.", ticker_label)
             if progress_cb:
                 progress_cb(ticker_label, idx, total_assets, "no_symbol", 0)
             continue
 
         last_date = QuoteDaily.objects.filter(asset=asset).aggregate(Max("date"))["date__max"]
         if not last_date:
-            _log_missing_quote(asset, "supabase_missing", "No D1 quotes found")
+            logger.info("Skipping %s: no daily quotes found.", symbol)
             if progress_cb:
                 progress_cb(symbol, idx, total_assets, "missing", 0)
             continue
@@ -97,11 +85,7 @@ def bulk_update_quotes(
         missing_dates = find_missing_dates_for_asset(asset, since_months=18)
         if missing_dates:
             total_missing += len(missing_dates)
-            _log_missing_quote(
-                asset,
-                "missing_dates",
-                f"{len(missing_dates)} dias faltando",
-            )
+            logger.info("%s: %s dias faltando.", symbol, len(missing_dates))
 
         try:
             deleted = _prune_old_quotes(asset)

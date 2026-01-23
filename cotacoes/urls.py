@@ -3,10 +3,8 @@ from django.urls import path
 from . import views
 from .views import (
     QuotesHomeView, update_quotes, quotes_pivot,
-    clear_logs, quotes_progress, update_quotes_ajax,
+    quotes_progress, update_quotes_ajax,
     update_live_quotes_view,
-    faltantes_home, faltantes_scan, faltantes_scan_ajax, faltantes_progress,
-    faltantes_detail, faltantes_fetch_one, faltantes_insert_one,
 )
 
 app_name = "cotacoes"
@@ -18,16 +16,4 @@ urlpatterns = [
     path("ajax/atualizar/", update_quotes_ajax, name="update_ajax"),
     path("progresso/", quotes_progress, name="progress"),
     path("pivot/", quotes_pivot, name="pivot"),
-    path("logs/limpar/", clear_logs, name="logs_clear"),
-
-    # Faltantes - lista e scanner
-    path("faltantes/", faltantes_home, name="faltantes_home"),
-    path("faltantes/scan/", faltantes_scan, name="faltantes_scan"),
-    path("faltantes/scan-ajax/", faltantes_scan_ajax, name="faltantes_scan_ajax"),
-    path("faltantes/progresso/", faltantes_progress, name="faltantes_progress"),
-
-    # Faltantes - detalhe por ticker
-    path("faltantes/<str:ticker>/", faltantes_detail, name="faltantes_detail"),
-    path("faltantes/<str:ticker>/fetch/<slug:dt>/", faltantes_fetch_one, name="faltantes_fetch_one"),
-    path("faltantes/<str:ticker>/insert/", faltantes_insert_one, name="faltantes_insert_one"),
 ]

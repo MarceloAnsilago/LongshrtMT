@@ -24,7 +24,7 @@ if not apps.ready:
 from django.db import transaction
 
 from acoes.models import Asset
-from cotacoes.models import MissingQuoteLog, QuoteDaily, QuoteLive
+from cotacoes.models import QuoteDaily, QuoteLive
 
 
 ASSETS: list[Tuple[str, str]] = [
@@ -138,11 +138,10 @@ def _normalise_assets(assets: Iterable[Tuple[str, str]]) -> OrderedDict[str, str
 
 def _purge_related(asset_ids: Sequence[int]) -> dict[str, int]:
     if not asset_ids:
-        return {"quotes": 0, "live": 0, "logs": 0}
+        return {"quotes": 0, "live": 0}
     quotes = QuoteDaily.objects.filter(asset_id__in=asset_ids).delete()[0]
     live = QuoteLive.objects.filter(asset_id__in=asset_ids).delete()[0]
-    logs = MissingQuoteLog.objects.filter(asset_id__in=asset_ids).delete()[0]
-    return {"quotes": quotes, "live": live, "logs": logs}
+    return {"quotes": quotes, "live": live}
 
 
 @transaction.atomic
@@ -160,7 +159,7 @@ def run(
     Sync the Asset table so it mirrors the provided list.
 
     destructive=True removes assets that are no longer listed.
-    purge_quotes=True clears QuoteDaily/QuoteLive/MissingQuoteLog for removed assets.
+    purge_quotes=True clears QuoteDaily/QuoteLive for removed assets.
     deactivate_removed=True marks removed assets as inactive when destructive=False.
     dry_run=True prints the intended actions without touching the database.
     """
@@ -201,7 +200,7 @@ def run(
             asset.save()
             updated += 1
 
-    purged = {"quotes": 0, "live": 0, "logs": 0}
+    purged = {"quotes": 0, "live": 0}
     if purge_quotes and removed_ids:
         purged = _purge_related(removed_ids)
 
@@ -217,7 +216,7 @@ def run(
         "[seed-assets] "
         f"created={inserted} updated={updated} reactivated={reactivated} "
         f"deleted={deleted_assets} deactivated={deactivated_assets} "
-        f"purged_quotes={purged['quotes']} purged_live={purged['live']} purged_logs={purged['logs']}"
+        f"purged_quotes={purged['quotes']} purged_live={purged['live']}"
     )
 
 

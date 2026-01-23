@@ -43,5 +43,4 @@ urlpatterns = [
     ),
     path("encerradas/", login_required(views.encerradas), name="encerradas"),
     path("config/", views.config, name="config"),
-    path("faltantes/", views.faltantes, name="faltantes"),
 ]

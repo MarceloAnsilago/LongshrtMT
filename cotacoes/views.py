@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
-import threading
-from urllib.parse import quote_plus
+
 import pandas as pd
 
 from django.contrib import messages
@@ -10,23 +8,16 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.cache import cache
 from django.http import HttpRequest, JsonResponse
-from django.shortcuts import render, redirect, get_object_or_404
+from django.shortcuts import render, redirect
 from django.urls import reverse_lazy
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_GET, require_POST
 from django.views.generic import ListView, TemplateView
-from django.db import close_old_connections
 from django.db.models import Max
 
 from acoes.models import Asset
-from .models import QuoteDaily, MissingQuoteLog
-
-from longshort.services.quotes import (
-    scan_all_assets_and_fix,
-    find_missing_dates_for_asset,
-    try_fetch_single_date,
-    _date_to_unix,  # helper p/ montar link do Yahoo
-)
+from .models import QuoteDaily
+from longshort.services.quotes import update_live_quotes
 
 
 def _parse_ticker_filter(request: HttpRequest) -> list[str] | None:
@@ -83,7 +74,6 @@ class QuotesHomeView(LoginRequiredMixin, TemplateView):
             QuoteDaily.objects.select_related("asset")
             .order_by("-date")[:30]
         )
-        ctx["logs"] = MissingQuoteLog.objects.order_by("-created_at")[:20]
 
         limit = 200 if tickers_filter else 60
         pivot_ctx = _build_pivot_context(
@@ -132,14 +122,6 @@ def quotes_pivot(request: HttpRequest):
     return render(request, "cotacoes/quote_pivot.html",
                   {"cols": pivot_ctx["cols"], "data": pivot_ctx["rows"]})
 
-
-
-@login_required
-@require_POST
-def clear_logs(request: HttpRequest):
-    deleted = MissingQuoteLog.objects.filter(resolved_bool=False).delete()[0]
-    messages.success(request, f"Logs limpos: {deleted} removidos.")
-    return redirect("cotacoes:home")
 
 
 PROGRESS_KEY = "quotes_progress_user_{uid}"
@@ -217,8 +199,6 @@ def update_live_quotes_view(request: HttpRequest):
     """
     View que valida as cotacoes ao vivo no Supabase.
     """
-    from longshort.services.quotes import update_live_quotes
-
     assets = Asset.objects.filter(is_active=True).order_by("id")
     n_updated, n_total = update_live_quotes(assets)
 
@@ -227,175 +207,3 @@ def update_live_quotes_view(request: HttpRequest):
 
 
 
-def faltantes(request):
-    return redirect("cotacoes:faltantes_home")
-
-@require_http_methods(["GET"])
-def faltantes_home(request):
-    """
-    Mostra a página e um botão 'Escanear e corrigir'.
-    Se já houver resultados em sessão (última execução), renderiza-os.
-    """
-    cached_results = cache.get(FALTANTES_RESULTS_KEY.format(uid=request.user.id)) if request.user.is_authenticated else None
-    if cached_results:
-        cache.delete(FALTANTES_RESULTS_KEY.format(uid=request.user.id))
-    ctx = {
-        "current": "faltantes",
-        "results": cached_results or request.session.pop("faltantes_results", None),
-    }
-    return render(request, "cotacoes/faltantes.html", ctx)
-
-@require_http_methods(["POST"])
-def faltantes_scan(request):
-    use_stooq = bool(request.POST.get("use_stooq"))
-    # exemplo limitando a janela a 18 meses (opcional):
-    results = scan_all_assets_and_fix(use_stooq=use_stooq, since_months=18)
-
-    n_fixed = sum(r["fixed"] for r in results)
-    n_remaining = sum(len(r["remaining"]) for r in results)
-    messages.info(request, f"Scanner concluído: {n_fixed} preenchido(s), {n_remaining} restante(s).")
-
-    request.session["faltantes_results"] = results
-    return redirect("cotacoes:faltantes_home")
-
-
-FALTANTES_PROGRESS_KEY = "faltantes_progress_user_{uid}"
-FALTANTES_RESULTS_KEY = "faltantes_results_user_{uid}"
-
-
-def _faltantes_progress_set(user_id: int, **kwargs):
-    key = FALTANTES_PROGRESS_KEY.format(uid=user_id)
-    payload = {"ts": timezone.now().isoformat(), **kwargs}
-    cache.set(key, payload, timeout=60 * 10)
-
-
-def _faltantes_progress_get(user_id: int):
-    key = FALTANTES_PROGRESS_KEY.format(uid=user_id)
-    return cache.get(key) or {}
-
-
-@require_GET
-@login_required
-def faltantes_progress(request: HttpRequest):
-    return JsonResponse(_faltantes_progress_get(request.user.id))
-
-
-@login_required
-@require_POST
-def faltantes_scan_ajax(request: HttpRequest):
-    use_stooq = bool(request.POST.get("use_stooq"))
-
-    def progress_cb(sym: str, idx: int, total: int, status: str, rows: int):
-        _faltantes_progress_set(
-            request.user.id,
-            ticker=sym,
-            index=idx,
-            total=total,
-            status=status,
-            rows=rows,
-        )
-
-    def worker():
-        close_old_connections()
-        try:
-            results = scan_all_assets_and_fix(
-                use_stooq=use_stooq,
-                since_months=18,
-                progress_cb=progress_cb,
-            )
-            n_fixed = sum(r["fixed"] for r in results)
-            n_remaining = sum(len(r["remaining"]) for r in results)
-            cache.set(FALTANTES_RESULTS_KEY.format(uid=request.user.id), results, timeout=60 * 10)
-            _faltantes_progress_set(
-                request.user.id,
-                ticker="",
-                index=len(results),
-                total=len(results),
-                status="done",
-                rows=n_fixed,
-                remaining=n_remaining,
-            )
-        finally:
-            close_old_connections()
-
-    assets_total = Asset.objects.filter(is_active=True).count()
-    _faltantes_progress_set(
-        request.user.id,
-        ticker="",
-        index=0,
-        total=assets_total,
-        status="starting",
-        rows=0,
-    )
-    threading.Thread(target=worker, daemon=True).start()
-    return JsonResponse({"ok": True})
-
-
-from django.shortcuts import render, redirect, get_object_or_404
-from django.views.decorators.http import require_http_methods
-from django.contrib import messages
-from acoes.models import Asset
-from longshort.services.quotes import (
-    find_missing_dates_for_asset,
-    try_fetch_single_date,
-)
-
-
-
-@require_http_methods(["GET"])
-def faltantes_detail(request, ticker: str):
-    asset = get_object_or_404(Asset, ticker=ticker.upper())
-    # reescaneia só esse ativo pra pegar a lista atualizada
-    missing = find_missing_dates_for_asset(asset)
-    # monta linhas com link pro Yahoo e ação de tentar baixar
-    google_query = quote_plus(f"{ticker.upper()} SA")
-    google_url = f"https://www.google.com/search?q={google_query}"
-    rows = []
-    for d in missing:
-        period1 = _date_to_unix(d)  # usa helper do services (ou recrie aqui)
-        period2 = _date_to_unix(d + timedelta(days=1))
-        yahoo_url = f"https://finance.yahoo.com/quote/{ticker.upper()}.SA/history?period1={period1}&period2={period2}"
-        rows.append(
-            {
-                "date": d,
-                "date_iso": d.isoformat(),
-                "yahoo_url": yahoo_url,
-                "google_url": google_url,
-            }
-        )
-    ctx = {
-        "current": "faltantes",
-        "ticker": ticker.upper(),
-        "rows": rows,
-    }
-    return render(request, "cotacoes/faltantes_detail.html", ctx)
-
-@require_http_methods(["POST"])
-def faltantes_fetch_one(request, ticker: str, dt: str):
-    asset = get_object_or_404(Asset, ticker=ticker.upper())
-    try:
-        d = date.fromisoformat(dt)
-    except Exception:
-        messages.error(request, f"Data inválida: {dt}")
-        return redirect("cotacoes:faltantes_detail", ticker=ticker)
-
-    ok = try_fetch_single_date(asset, d, use_stooq=True)
-    if ok:
-        messages.success(request, f"{ticker} {d} ja existe no banco.")
-    else:
-        messages.warning(request, f"{ticker} {d}: nao ha dado no Supabase.")
-    return redirect("cotacoes:faltantes_detail", ticker=ticker)
-
-@require_http_methods(["POST"])
-def faltantes_insert_one(request, ticker: str):
-    asset = get_object_or_404(Asset, ticker=ticker.upper())
-    dt = request.POST.get("date")
-    px = request.POST.get("price")
-    try:
-        d = date.fromisoformat(dt)
-        price = float(px)
-        QuoteDaily.objects.create(asset=asset, date=d, close=price)
-        messages.success(request, f"Inserido manualmente: {ticker} {d} = {price:.2f}.")
-    except Exception as e:
-        messages.error(request, f"Falha ao inserir: {e}")
-    return redirect("cotacoes:faltantes_detail", ticker=ticker)

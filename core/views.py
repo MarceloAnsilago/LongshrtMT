@@ -1817,10 +1817,6 @@ def operacoes(request):
     return render(request, "core/operacoes.html", context)
 
 
-def faltantes(request):
-    return redirect("cotacoes:faltantes_home")
-
-
 @login_required
 def config(request):
     config_obj, _ = UserMetricsConfig.objects.get_or_create(
