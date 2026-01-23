@@ -49,6 +49,11 @@ ALLOWED_HOSTS = parse_csv_env("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
 
 CSRF_TRUSTED_ORIGINS = parse_space_env("DJANGO_CSRF_TRUSTED_ORIGINS", "")
 
+EA_SHARED_TOKEN = os.environ.get("EA_SHARED_TOKEN", "")
+MT5_DEFAULT_TERMINAL = os.environ.get("MT5_DEFAULT_TERMINAL", "VPS01")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = True
@@ -73,6 +78,7 @@ INSTALLED_APPS = [
     'acoes',
     'cotacoes',
     'operacoes',
+    'bridge',
 
     # Extras
     'django_htmx',

@@ -36,6 +36,8 @@ from pairs.constants import DEFAULT_BASE_WINDOW, DEFAULT_WINDOWS
 from pairs.forms import UserMetricsConfigForm
 from pairs.models import Pair, UserMetricsConfig
 from operacoes.models import Operation, OperationMetricSnapshot
+from bridge.services import create_order
+from bridge.models import OrderRequest
 
 logger = logging.getLogger(__name__)
 
@@ -1472,6 +1474,19 @@ def operacoes(request):
         operation.pair_metrics = metrics_payload if isinstance(metrics_payload, dict) else None
         operation.save()
 
+        terminal_id = getattr(settings, "MT5_DEFAULT_TERMINAL", "VPS01")
+        pair_label = str(pair_obj.pk) if pair_obj else f"{left_ticker}_{right_ticker}"
+        order_request = create_order(
+            terminal_id=terminal_id,
+            pair_id=pair_label,
+            side=OrderRequest.Side.SELL,
+            symbol_a=sell_ticker,
+            qty_a=sell_qty,
+            symbol_b=buy_ticker,
+            qty_b=buy_qty,
+            order_type=OrderRequest.OrderType.MARKET,
+        )
+
         metrics_snapshot_payload = metrics_payload if isinstance(metrics_payload, dict) else None
         if metrics_snapshot_payload:
             snapshot = OperationMetricSnapshot(
@@ -1483,7 +1498,14 @@ def operacoes(request):
             snapshot.save()
 
         redirect_url = reverse("core:operacao_encerrar", args=[operation.pk])
-        return JsonResponse({"ok": True, "redirect": redirect_url})
+        return JsonResponse(
+            {
+                "ok": True,
+                "redirect": redirect_url,
+                "order_id": str(order_request.id),
+                "terminal_id": terminal_id,
+            }
+        )
 
     if request.method == "POST":
         return _handle_operation_post()

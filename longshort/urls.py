@@ -18,6 +18,7 @@ urlpatterns = [
     path("pares/", include(("pairs.urls", "pairs"), namespace="pairs")),
 
     path("accounts/", include("accounts.urls")),
+    path("bridge/", include("bridge.urls")),
 
     path("health/", healthcheck, name="healthcheck"),
 
