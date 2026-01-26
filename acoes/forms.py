@@ -5,7 +5,7 @@ from .models import Asset
 class AssetForm(forms.ModelForm):
     class Meta:
         model = Asset
-        fields = ["ticker", "ticker_yf", "name", "is_active"]  # <-- sem logo_prefix
+        fields = ["ticker", "ticker_yf", "name", "image_url", "is_active"]  # <-- sem logo_prefix
 
     def clean_ticker(self):
         return (self.cleaned_data.get("ticker") or "").upper().strip()
@@ -16,3 +16,6 @@ class AssetForm(forms.ModelForm):
         if yf and "." not in yf:
             yf += ".SA"               # autopreenche .SA
         return yf
+
+    def clean_image_url(self):
+        return (self.cleaned_data.get("image_url") or "").strip()

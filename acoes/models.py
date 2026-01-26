@@ -8,6 +8,7 @@ class Asset(models.Model):
     name = models.CharField(max_length=100, blank=True, default="")
     is_active = models.BooleanField(default=True)
     logo_prefix = models.CharField(max_length=4, blank=True, default="")
+    image_url = models.URLField(blank=True, default="")
 
     def __str__(self):
         return self.ticker
