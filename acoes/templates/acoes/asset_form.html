@@ -21,7 +21,7 @@
   {% if view.object %}
     <img
       class="asset-form-icon"
-      src="{% static 'icones/' %}{{ view.object.ticker|upper }}.png"
+      src="https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{{ view.object.ticker|upper }}.png"
       alt="{{ view.object.ticker }} icon"
       loading="lazy"
       onerror="this.style.opacity=0.3; this.style.filter='grayscale(1)'; this.title='Ícone indisponível';"
