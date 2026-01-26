@@ -119,12 +119,16 @@
               <td class="text-center">
                 <img
                   class="asset-icon-placeholder"
+                  {% if a.image_url %}
+                  src="{{ a.image_url }}"
+                  data-fallback="https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{{ a.ticker|upper }}.png"
+                  {% else %}
                   src="https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{{ a.ticker|upper }}.png"
-                  data-fallback="{{ a.image_url|default:'' }}"
+                  {% endif %}
                   alt="{{ a.ticker }} icon"
                   title="{{ a.ticker }}"
                   loading="lazy"
-onerror="if (!this.dataset.fallbackTried && this.dataset.fallback) { this.dataset.fallbackTried='1'; this.src=this.dataset.fallback; return; } this.style.opacity=0.3; this.style.filter='grayscale(1)'; this.title='Ícone indisponível';"
+                  onerror="if (!this.dataset.fallbackTried && this.dataset.fallback) { this.dataset.fallbackTried='1'; this.src=this.dataset.fallback; return; } this.style.opacity=0.3; this.style.filter='grayscale(1)'; this.title='Ícone indisponível';"
                 />
               </td>
               <td><span class="fw-semibold">{{ a.ticker }}</span></td>

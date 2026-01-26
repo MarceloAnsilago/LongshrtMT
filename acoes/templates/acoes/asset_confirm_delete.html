@@ -18,8 +18,12 @@
 <div class="d-flex align-items-center gap-3 mb-3">
   <img
     class="asset-confirm-icon"
+    {% if object.image_url %}
+    src="{{ object.image_url }}"
+    data-fallback="https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{{ object.ticker|upper }}.png"
+    {% else %}
     src="https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{{ object.ticker|upper }}.png"
-    data-fallback="{{ object.image_url|default:'' }}"
+    {% endif %}
     alt="{{ object.ticker }} icon"
     loading="lazy"
     onerror="if (!this.dataset.fallbackTried && this.dataset.fallback) { this.dataset.fallbackTried='1'; this.src=this.dataset.fallback; return; } this.style.opacity=0.3; this.style.filter='grayscale(1)'; this.title='Ícone indisponível';"
