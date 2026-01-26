@@ -109,7 +109,7 @@
           <thead class="table-light">
             <tr>
               <th class="text-center" style="width:60px;">Icon</th>
-              <th>Ticker</th><th>Nome</th><th>YF</th><th>Imagem</th><th>Status</th>
+              <th>Ticker</th><th>Nome</th><th>YF</th><th>Status</th>
               <th class="text-center">Fav</th><th class="text-end"></th>
             </tr>
           </thead>
@@ -141,15 +141,6 @@
             {% endif %}
           </td>
           <td>
-            {% if a.image_url %}
-              <a href="{{ a.image_url }}" target="_blank" rel="noopener" class="text-decoration-none">
-                <code>{{ a.image_url }}</code>
-              </a>
-            {% else %}
-              <span class="text-muted">-</span>
-            {% endif %}
-          </td>
-          <td>
             {% if a.is_active %}
               <span class="badge text-bg-success">Ativa</span>
             {% else %}
@@ -178,7 +169,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="8" class="text-center text-muted py-4">Nenhum ativo encontrado.</td>
+          <td colspan="7" class="text-center text-muted py-4">Nenhum ativo encontrado.</td>
         </tr>
         {% endfor %}
       </tbody>
