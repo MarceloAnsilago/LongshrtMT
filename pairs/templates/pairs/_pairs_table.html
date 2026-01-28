@@ -81,6 +81,16 @@
             {% else %}
               <span class="badge text-bg-secondary badge-pill">base</span>
             {% endif %}
+            {% if pair.existing_operation_info %}
+              <div class="mt-1">
+                <a
+                  class="badge text-bg-danger badge-pill text-decoration-none"
+                  href="{{ pair.existing_operation_info.url }}"
+                  title="{{ pair.existing_operation_info.message }}">
+                  op aberta
+                </a>
+              </div>
+            {% endif %}
           </td>
 
           <!-- Ações (somente Scan) -->

@@ -201,6 +201,7 @@ def pairs_home(request: HttpRequest) -> HttpResponse:
 
     for pair in pairs:
         pair.display_base = _merge_base_with_scan(pair, base_window)
+        pair.existing_operation_info = _build_existing_operation_info(request, pair)
 
     context = {
         "pairs": pairs,
