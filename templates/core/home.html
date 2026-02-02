@@ -146,10 +146,101 @@ document.addEventListener("DOMContentLoaded", () => {
   let operationsTimer;
   let hasLoadedOperations = false;
   const isPageVisible = () => document.visibilityState === "visible";
+  let selectedSort = null;
+  let sortState = { select: null, grid: null, sortFn: null };
 
   const getCookie = (name) => {
     const match = document.cookie.match(new RegExp("(^|;)\\s*" + name + "=([^;]+)"));
     return match ? decodeURIComponent(match[2]) : null;
+  };
+
+  const parseNumber = (raw) => {
+    if (raw === null || raw === undefined) {
+      return null;
+    }
+    let text = String(raw).trim();
+    if (!text) {
+      return null;
+    }
+    text = text.replace(/[^\d,.-]/g, "");
+    if (text.includes(",") && text.includes(".")) {
+      text = text.replace(/\./g, "").replace(",", ".");
+    } else if (text.includes(",") && !text.includes(".")) {
+      text = text.replace(",", ".");
+    }
+    const value = Number(text);
+    return Number.isFinite(value) ? value : null;
+  };
+
+  const initSortControls = () => {
+    const select = document.getElementById("home-cards-sort-select");
+    const grid = document.getElementById("home-cards-grid");
+    if (!select || !grid) {
+      sortState = { select: null, grid: null, sortFn: null };
+      return;
+    }
+
+    const sortConfig = {
+      zscore_abs_asc: { key: "zscoreAbs", dir: 1 },
+      zscore_abs_desc: { key: "zscoreAbs", dir: -1 },
+      zscore_asc: { key: "zscore", dir: 1 },
+      zscore_desc: { key: "zscore", dir: -1 },
+      days_asc: { key: "daysOpen", dir: 1 },
+      days_desc: { key: "daysOpen", dir: -1 },
+      pl_asc: { key: "plTotal", dir: 1 },
+      pl_desc: { key: "plTotal", dir: -1 },
+      capital_asc: { key: "capital", dir: 1 },
+      capital_desc: { key: "capital", dir: -1 },
+    };
+
+    const getSortIndex = (el) => {
+      const value = parseNumber(el?.dataset?.sortIndex);
+      return value === null ? 0 : value;
+    };
+
+    const getSortValue = (el, key) => {
+      if (!el || !key) {
+        return null;
+      }
+      return parseNumber(el.dataset?.[key]);
+    };
+
+    const sortCards = () => {
+      const config = sortConfig[select.value] || sortConfig.zscore_abs_asc;
+      const items = Array.from(grid.querySelectorAll("[data-sort-item='true']"));
+      items.sort((a, b) => {
+        const aValue = getSortValue(a, config.key);
+        const bValue = getSortValue(b, config.key);
+        const aMissing = aValue === null;
+        const bMissing = bValue === null;
+        if (aMissing && bMissing) {
+          return getSortIndex(a) - getSortIndex(b);
+        }
+        if (aMissing) {
+          return 1;
+        }
+        if (bMissing) {
+          return -1;
+        }
+        if (aValue === bValue) {
+          return getSortIndex(a) - getSortIndex(b);
+        }
+        return (aValue < bValue ? -1 : 1) * config.dir;
+      });
+      for (const item of items) {
+        grid.appendChild(item);
+      }
+    };
+
+    if (selectedSort) {
+      select.value = selectedSort;
+    }
+    select.addEventListener("change", () => {
+      selectedSort = select.value;
+      sortCards();
+    });
+    sortCards();
+    sortState = { select, grid, sortFn: sortCards };
   };
 
   const closedNotificationsContainer = document.getElementById("home-closed-notifications");
@@ -263,6 +354,7 @@ document.addEventListener("DOMContentLoaded", () => {
             container.innerHTML = payload.html;
             hasLoadedOperations = true;
             attachAlertRefresh();
+            initSortControls();
             if (liveUrl) {
               fetchLiveCards();
             }
@@ -416,6 +508,27 @@ document.addEventListener("DOMContentLoaded", () => {
     applyLiveFlash(el);
   };
 
+  const updateSortMetricsFromLive = (opId, prices) => {
+    if (!opId || !prices) {
+      return false;
+    }
+    const item = document.querySelector(
+      `[data-sort-item="true"][data-operation-id="${opId}"]`
+    );
+    if (!item) {
+      return false;
+    }
+    let updated = false;
+    if (typeof prices.pl_total_label === "string") {
+      const parsed = parseNumber(prices.pl_total_label);
+      if (parsed !== null) {
+        item.dataset.plTotal = String(parsed);
+        updated = true;
+      }
+    }
+    return updated;
+  };
+
   const removeBadgeClasses = (badge) => {
     if (!badge) {
       return;
@@ -472,6 +585,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!Array.isArray(cards)) {
       return;
     }
+    let shouldResort = false;
     for (const card of cards) {
       const opId = card.operation_id;
       const prices = card.current_prices || {};
@@ -479,6 +593,15 @@ document.addEventListener("DOMContentLoaded", () => {
         updateLiveFieldValue(opId, field, value);
       }
       updateLiveBadge(opId, prices.final_direction_label);
+      if (updateSortMetricsFromLive(opId, prices)) {
+        shouldResort = true;
+      }
+    }
+    if (shouldResort && sortState.select && sortState.sortFn) {
+      const sortValue = sortState.select.value;
+      if (sortValue === "pl_desc" || sortValue === "pl_asc") {
+        sortState.sortFn();
+      }
     }
   };
 

@@ -128,7 +128,7 @@ def _build_home_operations_payload(request):
             localized = dt_value
         return localized.strftime("%d/%m %H:%M:%S")
 
-    def _format_days_open(dt_value):
+    def _days_open_value(dt_value):
         if not dt_value:
             return None
         try:
@@ -137,6 +137,12 @@ def _build_home_operations_payload(request):
             delta = now - opened
             days = delta.days if delta.days >= 0 else 0
         except Exception:
+            return None
+        return days
+
+    def _format_days_open(dt_value):
+        days = _days_open_value(dt_value)
+        if days is None:
             return None
         label = "dia" if days == 1 else "dias"
         return f"{days} {label}"
@@ -303,6 +309,8 @@ def _build_home_operations_payload(request):
 
         latest_update = max(dt for dt in (sell_updated, buy_updated) if dt is not None) if sell_updated or buy_updated else None
 
+        days_open = _days_open_value(operation.opened_at)
+
         z_delta_label = "--"
         is_delta_positive = False
         if entry_zscore is not None and current_zscore is not None:
@@ -408,12 +416,34 @@ def _build_home_operations_payload(request):
                     "retorno_total_label": _format_pct(pnl_stats.get("retorno_total_%")),
                 }
 
+        current_zscore_abs = None
+        if current_zscore is not None:
+            try:
+                current_zscore_abs = abs(float(current_zscore))
+            except (TypeError, ValueError):
+                current_zscore_abs = None
+
+        pl_total_value = None
+        if pl_total is not None:
+            try:
+                pl_total_value = float(pl_total)
+            except (TypeError, ValueError):
+                pl_total_value = None
+
+        capital_value = None
+        if operation.capital_allocated is not None:
+            try:
+                capital_value = float(operation.capital_allocated)
+            except (TypeError, ValueError):
+                capital_value = None
+
         operations_cards.append(
             {
                 "operation": operation,
                 "url": reverse("core:operacao_encerrar", args=[operation.pk]),
                 "operation_date_label": _fmt_updated(operation.opened_at),
                 "operation_days_label": _format_days_open(operation.opened_at),
+                "days_open": days_open,
                 "capital_label": _fmt_money(operation.capital_allocated),
                 "entry": {
                     "zscore_label": _fmt_metric(entry_zscore),
@@ -433,7 +463,10 @@ def _build_home_operations_payload(request):
                 "buy_link": _yahoo_quote_url(operation.buy_asset),
                 "pnl_summary": pnl_summary,
                 "pl_total": pl_total,
+                "pl_total_value": pl_total_value,
                 "current_zscore": current_zscore,
+                "current_zscore_abs": current_zscore_abs,
+                "capital_value": capital_value,
             }
         )
 

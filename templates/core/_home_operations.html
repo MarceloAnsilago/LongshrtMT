@@ -57,6 +57,29 @@
         </div>
       </div>
     </div>
+    <div class="card soft-card shadow-sm rounded-4 mb-3" id="home-cards-sort-card">
+      <div class="card-body d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between gap-3">
+        <div>
+          <div class="text-uppercase small text-body-secondary mb-1">Ordenar cards</div>
+          <div class="small text-body-secondary">Escolha o criterio de ordenacao dos cards.</div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <label class="small text-body-secondary mb-0" for="home-cards-sort-select">Ordenar por</label>
+          <select class="form-select form-select-sm" id="home-cards-sort-select">
+            <option value="zscore_abs_asc" selected>Menor |Z| (absoluto)</option>
+            <option value="zscore_abs_desc">Maior |Z| (absoluto)</option>
+            <option value="zscore_desc">Maior Z-score</option>
+            <option value="zscore_asc">Menor Z-score</option>
+            <option value="days_desc">Maior tempo em dias</option>
+            <option value="days_asc">Menor tempo em dias</option>
+            <option value="pl_desc">Maior lucro/prejuizo</option>
+            <option value="pl_asc">Menor lucro/prejuizo</option>
+            <option value="capital_desc">Maior capital alocado</option>
+            <option value="capital_asc">Menor capital alocado</option>
+          </select>
+        </div>
+      </div>
+    </div>
   {% endif %}
 
   {% if live_refresh_required %}
@@ -72,11 +95,21 @@
 
   {% if operations_cards %}
 
-    <div class="row g-3">
+    <div class="row g-3" id="home-cards-grid">
 
       {% for item in operations_cards %}
 
-        <div class="col-12 col-lg-6 col-xxl-4">
+        <div
+          class="col-12 col-lg-6 col-xxl-4"
+          data-sort-item="true"
+          data-sort-index="{{ forloop.counter0 }}"
+          data-operation-id="{{ item.operation.pk }}"
+          data-zscore="{{ item.current_zscore|default_if_none:'' }}"
+          data-zscore-abs="{{ item.current_zscore_abs|default_if_none:'' }}"
+          data-days-open="{{ item.days_open|default_if_none:'' }}"
+          data-pl-total="{{ item.pl_total_value|default_if_none:'' }}"
+          data-capital="{{ item.capital_value|default_if_none:'' }}"
+        >
 
           <div class="card soft-card shadow-sm rounded-4 h-100" data-operation-id="{{ item.operation.pk }}">
 
