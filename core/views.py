@@ -765,6 +765,8 @@ def encerradas(request):
 
     days_total = 0.0
     days_count = 0
+    min_days_open: float | None = None
+    max_days_open: float | None = None
     hit_count = 0
     pnl_valid = 0
     profit_sum = Decimal("0")
@@ -797,14 +799,18 @@ def encerradas(request):
                 days_open = max(delta.total_seconds() / 86400, 0.0)
             except Exception:
                 days_open = 0.0
-        days_total += days_open
-        days_count += 1
         closing_date = closing_local.date() if hasattr(closing_local, "date") else None
         if closing_date:
             available_months.add((closing_date.year, closing_date.month))
         if not _is_within_period(closing_date):
             continue
         total_closed += 1
+        days_total += days_open
+        days_count += 1
+        if min_days_open is None or days_open < min_days_open:
+            min_days_open = days_open
+        if max_days_open is None or days_open > max_days_open:
+            max_days_open = days_open
         if closing_date:
             days_by_date[closing_date].append(days_open)
         sell_close_price = _fetch_price(operation.sell_asset_id, closing_date)
@@ -876,6 +882,13 @@ def encerradas(request):
     if days_count:
         avg_days_label = f"{(days_total / days_count):.1f} dias"
 
+    min_days_label = "--"
+    max_days_label = "--"
+    if min_days_open is not None:
+        min_days_label = f"{min_days_open:.1f} dias"
+    if max_days_open is not None:
+        max_days_label = f"{max_days_open:.1f} dias"
+
     ratio_label = "--"
     if loss_sum > Decimal("0"):
         try:
@@ -942,6 +955,8 @@ def encerradas(request):
             "hit_rate_label": hit_rate_label,
             "hit_rate_detail": hit_rate_detail,
             "avg_days_label": avg_days_label,
+            "min_days_label": min_days_label,
+            "max_days_label": max_days_label,
             "profit_total_label": _format_money(profit_sum),
             "loss_total_label": _format_money(loss_sum),
             "net_total_label": _format_money(net_total),

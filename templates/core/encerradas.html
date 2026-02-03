@@ -60,7 +60,10 @@
         <div class="card-body">
           <div class="text-uppercase text-body-tertiary small mb-1">Dias médios</div>
           <div class="display-6 fw-semibold mb-1">{{ avg_days_label }}</div>
-          <div class="text-body-secondary small">Tempo médio entre abertura e fechamento.</div>
+          <div class="text-body-secondary small">
+            Tempo médio entre abertura e fechamento.
+            <span class="d-block">Maior: {{ max_days_label }} | Menor: {{ min_days_label }}</span>
+          </div>
         </div>
       </div>
     </div>
